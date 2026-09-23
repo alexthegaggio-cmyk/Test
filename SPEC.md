@@ -382,3 +382,18 @@ Boot sequence: `SW.state.load()` → default observer if none: pick the most pop
 - Respect `prefers-reduced-motion` (no fly animations, no twinkle).
 - Accessibility: every control has a label; tabs use `role="tab"` / `aria-selected`; focus visible (`:focus-visible` outline in `--accent`); keyboard can reach every action the pointer can.
 - Copy: from the observer's side — "Dark from 21:40", "Rises 23:10 in the east", "Best at 02:15, 61° high". Active voice. No emoji in UI text (glyphs come from canvas or SVG).
+
+---
+
+## 10. CSS class vocabulary (shared by styles.css, panel.js, timeline.js, index.html)
+
+`styles.css` must style these; `panel.js` / `timeline.js` must use them (add BEM-ish modifiers freely, but these are the shared ones):
+
+- Tabs: `#tabs .tab` (`role="tab"`, `.is-active`, `aria-selected`), `.tab-panel` (one per tab inside `#panel-content`, toggled with the `hidden` attribute).
+- Text: `.h-display` (display font heading), `.eyebrow` (uppercase label), `.mono` (tabular mono), `.dim` (`--text-dim`), `.note` (small explanatory text), `.empty` (empty-state block), `.divider`.
+- Blocks: `.section` (vertical rhythm unit), `.section-title`, `.stat-grid` (3-up on desktop, wraps on phones) with `.stat` → `.stat-label`, `.stat-value`, `.stat-sub`.
+- Lists: `.list` (container), `.row` (clickable item; `<button class="row">` or `role="button"`), `.row-glyph`, `.row-main` → `.row-title`, `.row-sub`; `.row-meta` (right-aligned mono column); `.chips` → `.chip` (`.chip-good`, `.chip-warn`, `.chip-accent`).
+- Forms: `.field` (label + control), `.input`, `.select`, `.toggle` (checkbox row: `<label class="toggle"><input type="checkbox"><span>…</span></label>`), `.btn` (`.btn-primary`, `.btn-ghost`, `.btn-sm`), `.btn-row`.
+- Data: `.data-list` (`<dl>` two-column: `<dt>`/`<dd>`), `.chart` (wrapper for a chart `<canvas>`, full width), `.results` (`<ul>` search results) → `.result` (`.is-active`), `.badge`.
+- Timeline: `#timeline` → `.tl-clock` (`#clock` inside; `.tl-date`, `.tl-zone`), `.tl-scrub` (holds `#scrub` canvas), `.tl-controls` → `.tl-btn`, `.tl-live` (LIVE badge), `.tl-speed` (`#speed` select).
+- App states: `#app.night` (night vision), `#app.sheet-open` (mobile panel expanded), `#stage.is-panning`.
