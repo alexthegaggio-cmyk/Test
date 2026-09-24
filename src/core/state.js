@@ -67,6 +67,7 @@
       constellations: true, constellationNames: true, starNames: true, dsos: true,
       altAzGrid: false, eqGrid: false, ecliptic: false, milkyWay: true, ground: true,
       labels: true, nightMode: false, panelTab: 'tonight', panelOpen: true,
+      mode: 'sky', labTab: 'gravity',
     };
   }
 

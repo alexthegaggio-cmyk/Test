@@ -9,12 +9,13 @@
 <div id="app" class="app">
   <header id="topbar">
     <div id="brand"><span class="brand-name">Skyward</span><span class="brand-tag">tonight's sky, anywhere</span></div>
+    <div id="mode" class="seg" role="group" aria-label="Mode"><button id="mode-sky" type="button" aria-pressed="true">Sky</button><button id="mode-lab" type="button" aria-pressed="false">Lab</button></div>
     <button id="loc-btn" type="button" aria-label="Change location"></button>
     <div id="status" aria-live="off"></div>
     <button id="night-btn" type="button" aria-pressed="false" title="Night vision">Night</button>
     <button id="panel-btn" type="button" aria-expanded="true" aria-controls="panel">Panel</button>
   </header>
-  <main id="stage"><canvas id="sky" aria-label="Sky map"></canvas><div id="toast" role="status"></div></main>
+  <main id="stage"><canvas id="sky" aria-label="Sky map"></canvas><div id="lab-hud"></div><div id="lab-hint"></div><div id="toast" role="status"></div></main>
   <aside id="panel" aria-label="Observing panel">
     <nav id="tabs" role="tablist"></nav>
     <div id="panel-content"></div>

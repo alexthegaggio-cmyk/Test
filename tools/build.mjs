@@ -20,6 +20,11 @@ const ORDER = [
   'src/render/interaction.js',
   'src/ui/panel.js',
   'src/ui/timeline.js',
+  'src/lab/lab.js',
+  'src/lab/gravity.js',
+  'src/lab/galaxies.js',
+  'src/lab/blackhole.js',
+  'src/lab/starforge.js',
   'src/app.js',
 ];
 

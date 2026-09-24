@@ -43,6 +43,7 @@
     SW.Interaction.init(canvas);
     SW.Panel.init();
     SW.Timeline.init();
+    if (SW.Lab) SW.Lab.init();
 
     // ---- top bar -------------------------------------------------------
     const app = $('app');
@@ -62,6 +63,17 @@
       app.classList.toggle('sheet-open', open);
       panelBtn.setAttribute('aria-expanded', String(open));
     };
+    const modeSky = $('mode-sky'), modeLab = $('mode-lab');
+    const renderMode = () => {
+      const lab = state.settings.mode === 'lab' && !!SW.Lab;
+      app.classList.toggle('lab', lab);
+      modeSky.setAttribute('aria-pressed', String(!lab));
+      modeLab.setAttribute('aria-pressed', String(lab));
+      if (lab) SW.Lab.enterMode(); else if (SW.Lab) SW.Lab.leaveMode();
+      status.hidden = lab;
+    };
+    modeSky.addEventListener('click', () => state.setDeep('settings.mode', 'sky'));
+    modeLab.addEventListener('click', () => state.setDeep('settings.mode', 'lab'));
     let lastStatus = '';
     const renderStatus = () => {
       const v = state.view;
@@ -73,7 +85,7 @@
     nightBtn.addEventListener('click', () => state.setDeep('settings.nightMode', !state.settings.nightMode));
     panelBtn.addEventListener('click', () => state.setDeep('settings.panelOpen', !state.settings.panelOpen));
 
-    renderLoc(); renderNight(); renderSheet(); renderStatus();
+    renderLoc(); renderNight(); renderSheet(); renderStatus(); renderMode();
 
     // ---- render loop ---------------------------------------------------
     let dirty = true;
@@ -87,7 +99,7 @@
     bus.on('observer', () => { renderLoc(); markDirty(); });
     bus.on('view', () => { renderStatus(); markDirty(); });
     bus.on('selection', markDirty);
-    bus.on('settings', () => { renderNight(); renderSheet(); markDirty(); });
+    bus.on('settings', () => { renderNight(); renderSheet(); renderMode(); markDirty(); });
     bus.on('resize', markDirty);
 
     // Whenever time is set from outside the loop (scrub, buttons, almanac), re-anchor.
@@ -98,6 +110,11 @@
 
     let frames = 0;
     function frame(nowReal) {
+      if (state.settings.mode === 'lab' && SW.Lab) {
+        SW.Lab.frame(nowReal);
+        root.requestAnimationFrame(frame);
+        return;
+      }
       if (state.live) {
         if (state.speed !== lastSpeed) { anchorReal = nowReal; anchorSim = state.time.getTime(); lastSpeed = state.speed; }
         const interval = state.speed === 1 ? 250 : 0;
@@ -124,7 +141,7 @@
 
     // ---- resize --------------------------------------------------------
     const stage = $('stage');
-    const onResize = () => { SW.Sky.resize(); bus.emit('resize'); };
+    const onResize = () => { SW.Sky.resize(); if (SW.Lab) SW.Lab.resize(); bus.emit('resize'); };
     if (root.ResizeObserver) new ResizeObserver(onResize).observe(stage);
     root.addEventListener('resize', onResize);
     root.addEventListener('orientationchange', onResize);
