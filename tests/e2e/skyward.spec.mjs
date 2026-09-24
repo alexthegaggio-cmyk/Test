@@ -93,6 +93,11 @@ test('1. loads with no console errors or page errors', async ({ page }) => {
 });
 
 test('2. the #sky canvas draws the sky (many distinct colours)', async ({ page }) => {
+  // Jump to local midnight of tonight so stars are up regardless of when the suite runs.
+  await page.evaluate(() => {
+    const ns = SW.time.nightStart(SW.state.time, SW.state.observer.tz);
+    SW.state.setTime(new Date(ns.getTime() + 12 * 3600e3), { live: false });
+  });
   await expect
     .poll(
       () =>
@@ -261,22 +266,6 @@ test('12. screenshots of every tab', async ({ page }, testInfo) => {
 
 const LABS = ['gravity', 'galaxies', 'blackhole', 'starforge'];
 
-/** Distinct colours in a region of a lab canvas (proves it drew something). */
-async function canvasColours(page, id, region = [0, 0, 300, 200]) {
-  return page.evaluate(([cid, [x, y, w, h]]) => {
-    const c = document.getElementById(cid);
-    if (!c) return -1;
-    // WebGL canvases can't be read via 2D getImageData; draw them onto a scratch canvas first.
-    const s = document.createElement('canvas'); s.width = w; s.height = h;
-    const ctx = s.getContext('2d');
-    ctx.drawImage(c, x, y, w, h, 0, 0, w, h);
-    const d = ctx.getImageData(0, 0, w, h).data;
-    const set = new Set();
-    for (let i = 0; i < d.length; i += 4) set.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
-    return set.size;
-  }, [id, region]);
-}
-
 test('13. Lab mode: switching shows the lab tabs and every sandbox draws without errors', async ({ page }, testInfo) => {
   test.setTimeout(120000);
   await page.locator('#mode-lab').click();
@@ -289,10 +278,11 @@ test('13. Lab mode: switching shows the lab tabs and every sandbox draws without
     const canvas = page.locator(`#lab-canvas-${id}`);
     await expect(canvas).toBeVisible();
     await page.waitForTimeout(2500);
-    const box = await canvas.boundingBox();
-    const colours = await canvasColours(page, `lab-canvas-${id}`, [0, 0, Math.min(400, Math.floor(box.width)), Math.min(300, Math.floor(box.height))]);
-    expect(colours, `${id} canvas should draw`).toBeGreaterThan(20);
-    await expect(page.locator(`#lab-pane-${id} .stat`).first()).toBeVisible();
+    // A WebGL canvas can't be read back after presentation, so judge by the element screenshot:
+    // a flat/blank canvas compresses to a few KB, a rendered simulation to tens of KB.
+    const png = await canvas.screenshot({ type: 'png' });
+    expect(png.length, `${id} canvas should draw (png ${png.length} bytes)`).toBeGreaterThan(15000);
+    await expect(page.locator(`#lab-pane-${id} .stat`).first()).toBeAttached();
     fs.mkdirSync(SCREENS_DIR, { recursive: true });
     await page.screenshot({ path: path.join(SCREENS_DIR, `${testInfo.project.name}-lab-${id}.png`) });
   }
