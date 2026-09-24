@@ -1,0 +1,25 @@
+<title>Skyward</title>
+<meta name="description" content="Offline planetarium and observing planner: tonight's sky for any place and time.">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0E1424">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style><!-- @styles --></style>
+<div id="app" class="app">
+  <header id="topbar">
+    <div id="brand"><span class="brand-name">Skyward</span><span class="brand-tag">tonight's sky, anywhere</span></div>
+    <button id="loc-btn" type="button" aria-label="Change location"></button>
+    <div id="status" aria-live="off"></div>
+    <button id="night-btn" type="button" aria-pressed="false" title="Night vision">Night</button>
+    <button id="panel-btn" type="button" aria-expanded="true" aria-controls="panel">Panel</button>
+  </header>
+  <main id="stage"><canvas id="sky" aria-label="Sky map"></canvas><div id="toast" role="status"></div></main>
+  <aside id="panel" aria-label="Observing panel">
+    <nav id="tabs" role="tablist"></nav>
+    <div id="panel-content"></div>
+  </aside>
+  <footer id="timeline"></footer>
+</div>
+<script><!-- @vendor --></script>
+<script><!-- @scripts --></script>
