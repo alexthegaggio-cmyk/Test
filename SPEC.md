@@ -163,7 +163,7 @@ SW.astro.rotationEqjToHor(date, obs)   // → Astronomy.RotationMatrix (EQJ→HO
 SW.astro.eqjToHor(raDeg, decDeg, date, obs)     // J2000 → { az, alt } (refracted). Convenience; not for bulk use.
 SW.astro.horToEqj(az, alt, date, obs)           // → { ra, dec } J2000 (unrefracted)
 SW.astro.applyRefraction(altDeg)                // 'normal' refraction, alt → apparent alt (cheap; safe for bulk)
-SW.astro.sunAltitude(date, obs)                 // deg, refracted
+SW.astro.sunAltitude(date, obs)                 // deg, geometric (unrefracted), consistent with twilight thresholds
 SW.astro.constellationAt(raJ2000Deg, decJ2000Deg) // → { symbol:'Ori', name:'Orion' }
 
 // Moon

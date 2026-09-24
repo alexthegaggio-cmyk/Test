@@ -151,7 +151,9 @@ describe('SW.astro positions', () => {
       const vec = Astronomy.VectorFromSphere(new Astronomy.Spherical(dec, ra, 1), INSTANTS.autumn);
       const sph = Astronomy.HorizonFromVector(Astronomy.RotateVector(rot, vec), 'normal');
       const got = A.eqjToHor(ra, dec, INSTANTS.autumn, SITES.rome);
-      assert.ok(horizonSeparation({ az: sph.lon, alt: sph.lat }, got) < 1e-9, `${name}: matrix path equals eqjToHor`);
+      // Compare the angles directly: an acos-based separation rounds to ~1e-6° near zero.
+      approxEqual(got.alt, sph.lat, 1e-9, `${name}: matrix path alt equals eqjToHor`);
+      assertAngleClose(got.az, sph.lon, 1e-9, `${name}: matrix path az equals eqjToHor`);
     }
     const t0 = performance.now();
     for (let i = 0; i < 2000; i++) A.rotationEqjToHor(new Date(INSTANTS.autumn.getTime() + i * 1000), SITES.rome);
@@ -237,11 +239,11 @@ describe('SW.astro positions', () => {
     assert.equal(A.bodyDetails('Mars', date, SITES.rome).ringTilt, undefined, 'only Saturn has rings');
   });
 
-  test('sunAltitude is the refracted altitude of the Sun', () => {
+  test('sunAltitude is the geometric (unrefracted) altitude of the Sun', () => {
     const date = new Date('2026-06-21T12:00:00Z');
     const ob = libObserver(SITES.london);
     const eq = Astronomy.Equator('Sun', date, ob, true, true);
-    const hor = Astronomy.Horizon(date, ob, eq.ra, eq.dec, 'normal');
+    const hor = Astronomy.Horizon(date, ob, eq.ra, eq.dec, null);
     approxEqual(A.sunAltitude(date, SITES.london), hor.altitude, 1e-9);
     approxEqual(A.sunAltitude(date, SITES.london), 61.9, 0.3, 'London noon at the June solstice');
     approxEqual(A.sunAltitude(new Date('2026-06-21T23:58:00Z'), SITES.london), -15.1, 0.5, 'London solar midnight in June: nautical, never astronomical night');
@@ -365,7 +367,8 @@ describe('SW.astro rise, transit, set', () => {
     assert.equal(polaris.alwaysDown, false);
     assert.equal(polaris.rise, null);
     assert.equal(polaris.set, null);
-    assert.ok(polaris.transit && Math.abs(polaris.transit.alt - (90 - SITES.london.lat + POLARIS.dec - 90 + 0.03)) < 1.2, 'upper culmination altitude');
+    // Upper culmination of a circumpolar star: lat + (90 − dec); Polaris' of-date dec (2026) is ~0.1° nearer the pole than J2000.
+    assert.ok(polaris.transit && Math.abs(polaris.transit.alt - (SITES.london.lat + 90 - POLARIS.dec)) < 1.2, 'upper culmination altitude');
 
     const canopus = A.riseTransitSetRadec(95.9880, -52.6957, nsLondon, SITES.london);
     assert.equal(canopus.alwaysDown, true, 'Canopus never rises from London');

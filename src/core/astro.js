@@ -41,7 +41,8 @@
     if (!Number.isFinite(lon)) lon = 0;
     if (!Number.isFinite(elev)) elev = 0;
     lat = Math.max(-89.99, Math.min(89.99, lat));
-    lon = ((lon + 180) % 360 + 360) % 360 - 180;
+    // Only wrap when out of range so an in-range longitude is returned bit-for-bit unchanged.
+    if (lon < -180 || lon >= 180) lon = ((lon + 180) % 360 + 360) % 360 - 180;
     const key = lat + ',' + lon + ',' + elev;
     if (key !== cachedKey) {
       cachedObs = new Astronomy.Observer(lat, lon, elev);
@@ -165,9 +166,14 @@
     return altDeg + Astronomy.Refraction('normal', altDeg);
   }
 
-  // Refracted altitude of the Sun's centre (deg).
+  // Geometric (unrefracted) altitude of the Sun's centre (deg) — consistent with the twilight thresholds
+  // (−6/−12/−18 are geometric); 'normal' refraction below −1° is non-physical, so it is not applied here.
+  // SPEC DEVIATION: SPEC §4.3 originally said "refracted"; see the note next to sunAltitude in §4.3.
   function sunAltitude(date, obs) {
-    return altitudeOf('Sun', toTime(date), observer(obs));
+    const time = toTime(date);
+    const ob = observer(obs);
+    const eq = Astronomy.Equator('Sun', time, ob, true, true);
+    return Astronomy.Horizon(time, ob, eq.ra, eq.dec, null).altitude;
   }
 
   // Constellation containing a J2000 point (deg) → { symbol:'Ori', name:'Orion' }.
@@ -342,15 +348,14 @@
     return out;
   }
 
-  // Sun altitude curve (deg, refracted) over [nightStart, nightStart+24h] → [{ t, alt }].
+  // Sun altitude curve (deg, geometric — same quantity as sunAltitude) over [nightStart, nightStart+24h] → [{ t, alt }].
   function sunAltitudeCurve(nightStart, obs, stepMinutes) {
     const start = toTime(nightStart);
-    const ob = observer(obs);
     const { step, n } = curveSteps(stepMinutes);
     const out = new Array(n);
     for (let i = 0; i < n; i++) {
       const time = start.AddDays(i * step / 1440);
-      out[i] = { t: time.date, alt: altitudeOf('Sun', time, ob) };
+      out[i] = { t: time.date, alt: sunAltitude(time, obs) };
     }
     return out;
   }
