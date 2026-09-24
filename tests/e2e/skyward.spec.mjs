@@ -264,7 +264,7 @@ test('12. screenshots of every tab', async ({ page }, testInfo) => {
 // Lab mode (SPEC-LAB.md)
 // ---------------------------------------------------------------------------
 
-const LABS = ['gravity', 'galaxies', 'blackhole', 'starforge'];
+const LABS = ['gravity', 'galaxies', 'blackhole', 'merger', 'starforge'];
 
 test('13. Lab mode: switching shows the lab tabs and every sandbox draws without errors', async ({ page }, testInfo) => {
   test.setTimeout(120000);

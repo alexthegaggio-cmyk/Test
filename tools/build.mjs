@@ -23,7 +23,10 @@ const ORDER = [
   'src/lab/lab.js',
   'src/lab/gravity.js',
   'src/lab/galaxies.js',
-  'src/lab/blackhole.js',
+  'src/lab/kerr-physics.js',
+  'src/lab/kerr-shader.js',
+  'src/lab/kerr.js',
+  'src/lab/merger.js',
   'src/lab/starforge.js',
   'src/app.js',
 ];
