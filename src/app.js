@@ -35,6 +35,13 @@
     try { saved = root.localStorage && root.localStorage.getItem('skyward.v1'); } catch (e) { saved = null; }
     if (!saved || !state.observer || !Number.isFinite(state.observer.lat)) state.set({ observer: defaultObserver() });
     state.setTime(state.now(), { live: true });
+    // Deep links: #lab opens the Lab; #blackhole, #gravity, #galaxies, #merger, #starforge open that sandbox.
+    const hash = (root.location && root.location.hash || '').replace('#', '');
+    if (hash === 'lab') state.setDeep('settings.mode', 'lab');
+    else if (['blackhole', 'gravity', 'galaxies', 'merger', 'starforge'].includes(hash)) {
+      state.setDeep('settings.labTab', hash);
+      state.setDeep('settings.mode', 'lab');
+    }
     // Phones start with the sheet collapsed so the sky and timeline are visible first.
     if (root.matchMedia && root.matchMedia('(max-width: 899px)').matches) state.setDeep('settings.panelOpen', false);
 
