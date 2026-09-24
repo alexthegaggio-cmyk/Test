@@ -7,7 +7,7 @@
   "scripts": {
     "data": "node tools/prepare-data.mjs",
     "build": "node tools/build.mjs",
-    "test": "node --test tests/unit/",
+    "test": "node --test tests/unit/*.test.mjs",
     "e2e": "playwright test -c tests/e2e/playwright.config.mjs",
     "check": "npm run build && npm test && npm run e2e"
   },
