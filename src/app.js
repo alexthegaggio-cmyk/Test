@@ -35,6 +35,8 @@
     try { saved = root.localStorage && root.localStorage.getItem('skyward.v1'); } catch (e) { saved = null; }
     if (!saved || !state.observer || !Number.isFinite(state.observer.lat)) state.set({ observer: defaultObserver() });
     state.setTime(state.now(), { live: true });
+    // Phones start with the sheet collapsed so the sky and timeline are visible first.
+    if (root.matchMedia && root.matchMedia('(max-width: 899px)').matches) state.setDeep('settings.panelOpen', false);
 
     const canvas = $('sky');
     SW.Sky.init(canvas);

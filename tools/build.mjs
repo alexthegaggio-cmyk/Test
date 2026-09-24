@@ -45,8 +45,10 @@ for (const [marker, body] of [['<!-- @styles -->', css], ['<!-- @vendor -->', ve
 }
 
 mkdirSync(join(ROOT, 'dist'), { recursive: true });
-const out = join(ROOT, 'dist/skyward.html');
-writeFileSync(out, html);
+// dist/skyward.html is a complete standalone document; dist/skyward.artifact.html is the same page
+// without doctype/charset, for hosts that wrap the file in their own document skeleton.
+writeFileSync(join(ROOT, 'dist/skyward.artifact.html'), html);
+writeFileSync(join(ROOT, 'dist/skyward.html'), '<!doctype html>\n<meta charset="utf-8">\n' + html);
 const kb = Math.round(Buffer.byteLength(html) / 1024);
 if (kb > 3072) throw new Error(`build: output is ${kb} KB, over the 3 MB budget`);
 console.log(`built dist/skyward.html (${kb} KB)`);
