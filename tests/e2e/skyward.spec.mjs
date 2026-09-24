@@ -254,3 +254,54 @@ test('12. screenshots of every tab', async ({ page }, testInfo) => {
     expect(fs.existsSync(file), `screenshot written: ${file}`).toBe(true);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Lab mode (SPEC-LAB.md)
+// ---------------------------------------------------------------------------
+
+const LABS = ['gravity', 'galaxies', 'blackhole', 'starforge'];
+
+/** Distinct colours in a region of a lab canvas (proves it drew something). */
+async function canvasColours(page, id, region = [0, 0, 300, 200]) {
+  return page.evaluate(([cid, [x, y, w, h]]) => {
+    const c = document.getElementById(cid);
+    if (!c) return -1;
+    // WebGL canvases can't be read via 2D getImageData; draw them onto a scratch canvas first.
+    const s = document.createElement('canvas'); s.width = w; s.height = h;
+    const ctx = s.getContext('2d');
+    ctx.drawImage(c, x, y, w, h, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const set = new Set();
+    for (let i = 0; i < d.length; i += 4) set.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+    return set.size;
+  }, [id, region]);
+}
+
+test('13. Lab mode: switching shows the lab tabs and every sandbox draws without errors', async ({ page }, testInfo) => {
+  test.setTimeout(120000);
+  await page.locator('#mode-lab').click();
+  await expect(page.locator('#app')).toHaveClass(/\blab\b/);
+  await expect(page.locator('#lab-tabs')).toBeVisible();
+  await expect(page.locator('#sky')).toBeHidden();
+  for (const id of LABS) {
+    await page.locator(`#lab-tab-${id}`).click();
+    await expect(page.locator(`#lab-tab-${id}`)).toHaveAttribute('aria-selected', 'true');
+    const canvas = page.locator(`#lab-canvas-${id}`);
+    await expect(canvas).toBeVisible();
+    await page.waitForTimeout(2500);
+    const box = await canvas.boundingBox();
+    const colours = await canvasColours(page, `lab-canvas-${id}`, [0, 0, Math.min(400, Math.floor(box.width)), Math.min(300, Math.floor(box.height))]);
+    expect(colours, `${id} canvas should draw`).toBeGreaterThan(20);
+    await expect(page.locator(`#lab-pane-${id} .stat`).first()).toBeVisible();
+    fs.mkdirSync(SCREENS_DIR, { recursive: true });
+    await page.screenshot({ path: path.join(SCREENS_DIR, `${testInfo.project.name}-lab-${id}.png`) });
+  }
+  // Pause / reset toolbar works and the sky comes back.
+  await page.locator('#lab-play').click();
+  await expect(page.locator('#lab-play')).toHaveText(/play/i);
+  await page.locator('#lab-reset').click();
+  await page.locator('#mode-sky').click();
+  await expect(page.locator('#app')).not.toHaveClass(/\blab\b/);
+  await expect(page.locator('#sky')).toBeVisible();
+  expect(page.__skywardErrors, page.__skywardErrors.join('\n')).toEqual([]);
+});
