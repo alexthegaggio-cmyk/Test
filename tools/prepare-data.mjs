@@ -92,7 +92,7 @@ const footer = `})(typeof globalThis !== 'undefined' ? globalThis : window);\n`;
     'Cr 399': 'Coathanger', 'Cr 256': 'Coma Star Cluster', 'C 41': 'Hyades', 'IC 2602': 'Southern Pleiades',
     'IC 2391': 'Omicron Velorum Cluster', 'NGC 292': 'Small Magellanic Cloud', 'PGC 17223': 'Large Magellanic Cloud',
     'NGC 6231': 'Northern Jewel Box', 'NGC 3532': 'Wishing Well Cluster', 'NGC 2516': 'Southern Beehive', 'NGC 2362': 'Tau Canis Majoris Cluster',
-    'NGC 2451': 'Puppis cluster', 'Cr 140': 'Collinder 140',
+    'NGC 2451': 'Puppis cluster', 'Cr 140': 'Collinder 140', 'Cr 39': 'Alpha Persei Cluster',
   };
   delete COMMON.M110; // (no widely used common name)
   const TYPE = { s: 'galaxy', e: 'galaxy', i: 'galaxy', sd: 'galaxy', g: 'galaxy', oc: 'open cluster', gc: 'globular cluster', pn: 'planetary nebula', snr: 'supernova remnant', sfr: 'nebula', en: 'nebula', rn: 'reflection nebula', dn: 'dark nebula', pos: 'position', bn: 'nebula' };
