@@ -50,12 +50,20 @@
 //   E = 1 hold EXACTLY (the CB constants); Q = β² + (α² − a²) cos² i holds to O(M/R0) ≈ 0.25 %.
 //
 // Integrator: classical RK4 in λ on the 6-vector (x⃗, p⃗) (p_t is constant, t is not needed).
-//   Step h = stepScale · max(h_floor, min(0.5 (r − r_+), 0.03 r + 0.06 r · smoothstep(3, 30, r))):
-//   ~9 % of r far out (straight rays), ~3 % of r near the hole (≈120 RK4 steps per photon-orbit
-//   revolution at r = 3), shrinking ∝ (r − r_+) at the horizon with h_floor = 0.02. Capture when
-//   r < r_+ (1 + 1e−3) (see the chart note below); escape when r > 400 and moving outward
-//   (x⃗·dx⃗/dλ > 0). Rays that exhaust `steps` show the sky in their current direction when
-//   r > 10, else black.
+//   Base step h = stepScale · max(0.02, min(½ |r − r_+|, 0.03 r + 0.06 r · smoothstep(3, 30, r))),
+//   then capped per step, as in SW.Kerr.integrate, so that |Δr| ≤ c(r) r with c = 0.02 for r < 8,
+//   0.05 at r = 25 and 0.10 for r > 60 (rays are straight there) and |Δp⃗| ≤ 0.05 |p⃗| (both from
+//   the k1 derivative; the momentum cap is what matters near the photon orbits, where p⃗ rotates
+//   fast: it limits each step to 1/126 of a revolution). Measured on the a = 0.998 Gargantua frame:
+//   |ΔH| ≤ 3e-5 (6e-2 without the momentum cap → adjacent-pixel speckle above the shadow; a 2 %
+//   cap gives 2e-6 but costs 314 steps per revolution and starves the rays that define the flat
+//   edge of the D-shaped shadow, pushing it out by 17 % within 600 steps). Rays that wind around
+//   the prograde photon orbit at a = 0.998 need ~130 steps per turn: at 320 steps the flat edge
+//   of the shadow comes out ~20 % too far out, at 600 steps within 4 %. Capture when
+//   r < r_+ (1 + 1e−3) (outgoing chart; see below) or r < 0.02 (ingoing chart), and in both charts
+//   when |p⃗| > 1e4 (the ray is hovering at a horizon and can only be black) or r is NaN; escape
+//   when r > 400 and moving outward (x⃗·dx⃗/dλ > 0). Rays that exhaust `steps` show the sky in
+//   their current direction when r > 10, else black. MAX_STEPS = 600.
 // Which chart the tracer integrates in — and why it is not the ingoing one: the rays traced here
 //   are the OUTGOING family (they reach the observer). In the ingoing Kerr–Schild chart that family
 //   is regular at the future horizon but singular at the past one: traced into the past it
@@ -82,6 +90,14 @@
 //   cpu.trace returns hit points and sky directions already converted back to ingoing KS.
 //   kerr.js: SW.Kerr.integrate on a past-directed ingoing state has the pole; use cpu.trace for
 //   tap → disc mapping, or stop it at r_+ + ½(r_ph,pro − r_+) (below r_ph,pro nothing escapes).
+// Camera inside the horizon (plunge): the outgoing chart does not cover the future interior
+//   (χ has ln(r − r_+)), so for r_cam < 1.05 r_+ the tracer switches to the INGOING chart itself
+//   (uChart = 1: no Φ, no χ, p = d − e0 past-directed, h > 0). There the light that fell in with
+//   the camera is the ingoing family — regular back out through r_+ — so the sky stays visible
+//   (aberrated, compressed) all the way down; rays whose past hugs r_+ from inside (white-hole
+//   origin) blow up in |p⃗| and are painted black by the |p⃗| > 1e4 rule; capture at r < 0.02
+//   (ring singularity). Between r_− and r_+ every past-directed ray has dr/dλ > 0, so nothing is
+//   lost. Disc azimuth and sky direction are read directly in that chart (no mirror).
 // Disc (thin, z = 0, r_in ≤ r ≤ r_out): the z sign change between two RK4 states is interpolated
 //   linearly in λ; on the plane r² = x² + y² − a². Emitter: circular Keplerian orbit,
 //   Ω = ±1/(r^{3/2} ± a) (upper: prograde), u^μ = u^t (1, −Ω y, Ω x, 0) — in KS Cartesian the
@@ -114,7 +130,10 @@
   const SW = root.SW = root.SW || {};
 
   const R_ESCAPE = 400.0;
-  const MAX_STEPS = 400;
+  const MAX_STEPS = 600;
+  // Per-step caps (shared by the GLSL loop and the JS twin): |Δr| ≤ CAP_R_NEAR·r near the hole,
+  // |Δp⃗| ≤ CAP_P·|p⃗|.
+  const CAPS = { rNear: 0.02, p: 0.05 };
   const STEP_FLOOR = 0.02;
 
   // ---------------------------------------------------------------- pure helpers (JS)
@@ -129,8 +148,17 @@
   // Prograde circular photon orbit radius, 2 (1 + cos(⅔ acos(−a))).
   function photonOrbit(a) { return 2 * (1 + Math.cos((2 / 3) * Math.acos(-a))); }
   function rMinus(a) { return 1 - Math.sqrt(Math.max(0, 1 - a * a)); }
-  // Capture radius of the tracer, r_+ (1 + 1e-3) (the tracer chart is regular there — see header).
-  function captureRadius(a) { return rPlus(a) * 1.001; }
+  // Capture radius of the tracer: r_+ (1 + 1e-3) in the outgoing chart, 0.02 in the ingoing one.
+  function captureRadius(a, chart) { return chart === 1 ? 0.02 : rPlus(a) * 1.001; }
+  // Which chart a params set traces in: 1 (ingoing) when a near-mode camera sits at r < 1.05 r_+.
+  function chartOf(params) {
+    const a = Math.min(0.998, Math.max(0, +params.a || 0));
+    if (params.mode === 'far' || !params.camera) return 0;
+    const c = params.camera, x = +c.x || 0, y = +c.y || 0, z = +c.z || 0;
+    const b = x * x + y * y + z * z - a * a;
+    const r = Math.sqrt(0.5 * (b + Math.sqrt(b * b + 4 * a * a * z * z)));
+    return r < 1.05 * rPlus(a) ? 1 : 0;
+  }
   // Azimuth offset between the ingoing and outgoing KS charts: ψ_out = ψ_in − χ(r) (header).
   function chi(a, r) {
     const rp = rPlus(a), rm = rMinus(a), d = rp - rm;
@@ -142,7 +170,7 @@
     const t = Math.min(1, Math.max(0, (r - 3) / 27));
     const sm = t * t * (3 - 2 * t);
     const base = 0.03 * r + 0.06 * r * sm;
-    return (stepScale || 1) * Math.max(STEP_FLOOR, Math.min(0.5 * (r - rPlus(a)), base));
+    return (stepScale || 1) * Math.max(STEP_FLOOR, Math.min(0.5 * Math.abs(r - rPlus(a)), base));
   }
   // Peak of (rIn/r)³ (1 − √(rIsco/r)) over r ≥ rIn — normalises the NT profile to 1 at its maximum.
   function discNorm(rIn, rIsco) {
@@ -177,11 +205,14 @@
 #define MAX_STEPS ${MAX_STEPS}
 #define R_ESCAPE ${R_ESCAPE.toFixed(1)}
 #define STEP_FLOOR 0.02
+#define CAP_R_NEAR ${CAPS.rNear}
+#define CAP_P ${CAPS.p}
 #define PI 3.14159265358979
 #define TWO_PI 6.28318530717959
 
 uniform float uA;          // spin
-uniform vec3  uHor;        // r_+, r_-, r_cap = r_+ (1 + 1e-3)
+uniform vec3  uHor;        // r_+, r_-, r_cap (r_+ (1 + 1e-3) in the outgoing chart, 0.02 in the ingoing one)
+uniform int   uChart;      // 0 outgoing chart via Φ (default), 1 ingoing chart (camera inside r_+)
 uniform int   uSteps;      // ≤ MAX_STEPS
 uniform float uStepScale;
 uniform vec2  uRes;        // canvas pixels
@@ -213,7 +244,7 @@ float blRadius(vec3 x) {
 
 // Hamilton's equations for H = ½ g^{μν} p_μ p_ν (derivation in the file header).
 // x = (x,y,z), p = (p_t, p_x, p_y, p_z). Returns dx/dλ, dp⃗/dλ and r.
-void deriv(in vec3 x, in vec4 p, out vec3 dx, out vec3 dp, out float rOut) {
+void deriv(in vec3 x, in vec4 p, out vec3 dx, out vec3 dp, out float rOut, out vec3 drOut) {
   float a = uA, a2 = a * a;
   float b = dot(x, x) - a2;
   float r2 = 0.5 * (b + sqrt(b * b + 4.0 * a2 * x.z * x.z));
@@ -239,6 +270,7 @@ void deriv(in vec3 x, in vec4 p, out vec3 dx, out vec3 dp, out float rOut) {
   c.z += ps.z / r;
   dp = 0.5 * df * K * K + f * K * c;
   rOut = r;
+  drOut = dr;
 }
 
 // p_μ = g_μν p^ν at x for a contravariant 4-vector (t,x,y,z).
@@ -257,7 +289,7 @@ vec4 lower(vec3 x, vec4 pUp) {
 float stepOf(float r) {
   float sm = smoothstep(3.0, 30.0, r);
   float base = 0.03 * r + 0.06 * r * sm;
-  return uStepScale * max(STEP_FLOOR, min(0.5 * (r - uHor.x), base));
+  return uStepScale * max(STEP_FLOOR, min(0.5 * abs(r - uHor.x), base));
 }
 
 // ingoing/outgoing azimuth offset χ(r) (header); disc BL azimuth = −ψ_tracer + χ/2
@@ -388,7 +420,8 @@ vec3 discEmission(float r, vec2 xy, vec4 p, out float gOut, out float dopOut) {
   float I = uDisc.w * prof * uDisc2.y;                                       // bolometric, peak 1
   I *= smoothstep(uDisc.y, 0.88 * uDisc.y, r);                                // cosmetic outer-edge taper
   // Keplerian-sheared filaments: value noise in (φ − Ω t, ln r), φ = BL azimuth
-  float phi = -atan(xy.y, xy.x) + chiOf(r) - atan(a, r);   // SW.Kerr's φ label (header)
+  float psiIn = uChart == 0 ? -atan(xy.y, xy.x) + chiOf(r) : atan(xy.y, xy.x);
+  float phi = psiIn - atan(a, r);                            // SW.Kerr's φ label (header)
   float phs = phi - Om * uTime;
   vec2 q = vec2(phs / TWO_PI * 6.0, log(r) * 9.0);
   float n = vnoise(q, 6.0) * 0.65 + vnoise(q * vec2(2.0, 2.0) + 0.37, 12.0) * 0.35;
@@ -397,7 +430,8 @@ vec3 discEmission(float r, vec2 xy, vec4 p, out float gOut, out float dopOut) {
   if (uHot.w > 0.0) {
     float rs = uHot.x;
     float Oms = uDiscOn > 0 ? 1.0 / (rs * sqrt(rs) + a) : -1.0 / (rs * sqrt(rs) - a);
-    float phk = chiOf(rs) - atan(a, rs) - (uHot.y + Oms * uTime);   // tracer-chart azimuth of the spot
+    float phs2 = uHot.y + Oms * uTime + atan(a, rs);          // ingoing azimuth of the spot
+    float phk = uChart == 0 ? chiOf(rs) - phs2 : phs2;         // tracer-chart azimuth
     vec2 sp = sqrt(rs * rs + a * a) * vec2(cos(phk), sin(phk));
     float d2 = dot(xy - sp, xy - sp);
     fil += uHot.w * exp(-d2 / (2.0 * uHot.z * uHot.z));
@@ -448,20 +482,24 @@ void main() {
   bool discSlab = uDiscOn != 0 && uDisc2.z > 0.0;
   bool jets = uJets.x > 0.0;
   float r = 0.0, nSteps = 0.0;
-  vec3 k1x, k1p, k2x, k2p, k3x, k3p, k4x, k4p;
+  vec3 k1x, k1p, k2x, k2p, k3x, k3p, k4x, k4p, drv, drTmp;
   float rTmp;
 
   for (int i = 0; i < MAX_STEPS; i++) {
     if (i >= uSteps) break;
     nSteps += 1.0;
-    deriv(x, p, k1x, k1p, r);
-    if (r < uHor.z) { reason = 1; break; }
+    deriv(x, p, k1x, k1p, r, drv);
+    if (!(r >= uHor.z) || dot(p.yzw, p.yzw) > 1e8) { reason = 1; break; }   // captured / hovering / NaN
     if (r > R_ESCAPE && dot(x, k1x) > 0.0) { reason = 2; dirOut = k1x; break; }
     float h = stepOf(r);
+    float rdot = abs(dot(drv, k1x));
+    float cr = CAP_R_NEAR + (0.05 - CAP_R_NEAR) * smoothstep(8.0, 25.0, r) + 0.05 * smoothstep(25.0, 60.0, r);
+    h = min(h, cr * r / (rdot + 1e-6));
+    h = min(h, CAP_P * length(p.yzw) / (length(k1p) + 1e-9));
     float hh = 0.5 * h;
-    deriv(x + hh * k1x, vec4(p.x, p.yzw + hh * k1p), k2x, k2p, rTmp);
-    deriv(x + hh * k2x, vec4(p.x, p.yzw + hh * k2p), k3x, k3p, rTmp);
-    deriv(x + h * k3x, vec4(p.x, p.yzw + h * k3p), k4x, k4p, rTmp);
+    deriv(x + hh * k1x, vec4(p.x, p.yzw + hh * k1p), k2x, k2p, rTmp, drTmp);
+    deriv(x + hh * k2x, vec4(p.x, p.yzw + hh * k2p), k3x, k3p, rTmp, drTmp);
+    deriv(x + h * k3x, vec4(p.x, p.yzw + h * k3p), k4x, k4p, rTmp, drTmp);
     vec3 xn = x + (h / 6.0) * (k1x + 2.0 * k2x + 2.0 * k3x + k4x);
     vec4 pn = vec4(p.x, p.yzw + (h / 6.0) * (k1p + 2.0 * k2p + 2.0 * k3p + k4p));
 
@@ -518,7 +556,7 @@ void main() {
 
   // debug: escape direction encoded in two 8-bit passes (view 8: high byte, 9: low byte);
   // view 10: red = reason/4 (1 captured, 2 escaped, 3 opaque hit), green = steps/MAX_STEPS
-  dirOut.y = -dirOut.y;                            // tracer chart → ingoing KS (χ(400) ≈ 0)
+  if (uChart == 0) dirOut.y = -dirOut.y;           // tracer chart → ingoing KS (χ(400) ≈ 0)
   if (uView >= 8) {
     vec3 q = (reason == 2) ? normalize(dirOut) * 0.5 + 0.5 : vec3(0.0);
     vec3 hi = floor(q * 255.0) / 255.0;
@@ -705,7 +743,9 @@ void main() {
         const dl = Math.hypot(dx, dy, dz); dx /= dl; dy /= dl; dz /= dl;
         const vv = [cam.right, cam.up, cam.forward, cam.e0];
         for (let c = 0; c < 4; c++) for (let m = 0; m < 4; m++) BASIS_TMP[c * 4 + m] = vv[c][m];
-        const tc = toTracer(a, cam.x, cam.y, cam.z, BASIS_TMP, PIX_TMP);
+        let tc;
+        if (chartOf(params) === 0) tc = toTracer(a, cam.x, cam.y, cam.z, BASIS_TMP, PIX_TMP);
+        else { tc = PIX_TMP; tc.pos[0] = cam.x; tc.pos[1] = cam.y; tc.pos[2] = cam.z; tc.vecs.set(BASIS_TMP); }
         const B = tc.vecs;
         const pUp = [0, 0, 0, 0];
         for (let m = 0; m < 4; m++) pUp[m] = dx * B[m] + dy * B[4 + m] + dz * B[8 + m] - B[12 + m];
@@ -726,7 +766,8 @@ void main() {
       const s = pixelRay(params, px, py, width, height, o.state);
       const maxSteps = o.steps || params.steps || 200;
       const stepScale = params.stepScale || 1;
-      const rcap = captureRadius(a);
+      const chart = chartOf(params);
+      const rcap = captureRadius(a, chart);
       const d = T1;
       const disc = o.stopAtDisc && params.disc && params.disc.on;
       const rIn = disc ? (params.disc.rIn != null ? params.disc.rIn : isco(a, params.disc.prograde !== false)) : 0;
@@ -736,9 +777,18 @@ void main() {
       for (; n < maxSteps; n++) {
         deriv(a, s, d);
         r = rOf(s[1], s[2], s[3], a);
-        if (r < rcap) { reason = 'horizon'; break; }
+        const pn2 = s[5] * s[5] + s[6] * s[6] + s[7] * s[7];
+        if (!(r >= rcap) || pn2 > 1e8) { reason = 'horizon'; break; }
         if (r > R_ESCAPE && (s[1] * d[1] + s[2] * d[2] + s[3] * d[3]) > 0) { reason = 'escape'; break; }
-        const h = stepOf(r, a, stepScale);
+        let h = stepOf(r, a, stepScale);
+        {
+          const x = s[1], y = s[2], z = s[3], r2 = r * r, invD = 1 / (r2 * r2 + a * a * z * z);
+          const rdot = Math.abs((x * d[1] + y * d[2]) * r * r2 * invD + z * r * (r2 + a * a) * invD * d[3]);
+          const sm = (lo, hi) => { const t = Math.min(1, Math.max(0, (r - lo) / (hi - lo))); return t * t * (3 - 2 * t); };
+          const cr = CAPS.rNear + (0.05 - CAPS.rNear) * sm(8, 25) + 0.05 * sm(25, 60);
+          h = Math.min(h, cr * r / (rdot + 1e-6));
+          h = Math.min(h, CAPS.p * Math.sqrt(pn2) / (Math.hypot(d[5], d[6], d[7]) + 1e-9));
+        }
         const x0 = s[1], y0 = s[2], p0x = s[5], p0y = s[6], p0z = s[7];
         rk4(a, s, h);
         if (disc && zPrev * s[3] < 0) {
@@ -758,13 +808,13 @@ void main() {
       if (reason === 'escape' || (reason === 'maxSteps' && r > 10)) {
         deriv(a, s, d);
         const l = Math.hypot(d[1], d[2], d[3]);
-        dir = [d[1] / l, -d[2] / l, d[3] / l];
+        dir = [d[1] / l, chart === 0 ? -d[2] / l : d[2] / l, d[3] / l];
         if (reason === 'maxSteps') reason = 'escape';
       }
-      if (reason === 'disc') hit = Array.from(fromTracer(a, s[1], s[2], 0));
+      if (reason === 'disc') hit = chart === 0 ? Array.from(fromTracer(a, s[1], s[2], 0)) : [s[1], s[2], 0];
       return { reason, steps: n, state: s, dir, r, hit };
     }
-    return { rOf, lower, deriv, rk4, pixelRay, trace, toTracer, fromTracer, chi, stepOf, isco, rPlus, rMinus, photonOrbit, captureRadius, farBasis };
+    return { rOf, lower, deriv, rk4, pixelRay, trace, toTracer, fromTracer, chi, chartOf, CAPS, stepOf, isco, rPlus, rMinus, photonOrbit, captureRadius, farBasis };
   })();
 
   // ---------------------------------------------------------------- GL program
@@ -795,7 +845,7 @@ void main() {
     return prog;
   }
 
-  const UNIFORMS = ['uA', 'uHor', 'uSteps', 'uStepScale', 'uRes', 'uMode', 'uFov', 'uHalfW', 'uCam', 'uBasis',
+  const UNIFORMS = ['uA', 'uHor', 'uChart', 'uSteps', 'uStepScale', 'uRes', 'uMode', 'uFov', 'uHalfW', 'uCam', 'uBasis',
     'uFar', 'uDiscOn', 'uDisc', 'uDisc2', 'uHot', 'uJets', 'uView', 'uBg', 'uTone', 'uTime', 'uSky', 'uHasSky', 'uRamp'];
 
   // Create the tracer on a canvas. opts: { webgl1Fallback = true, forceWebGL1 = false,
@@ -894,7 +944,8 @@ void main() {
       if (isGL2) gl.bindVertexArray(vao); else { gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0); }
 
       gl.uniform1f(loc.uA, a);
-      gl.uniform3f(loc.uHor, rPlus(a), rMinus(a), captureRadius(a));
+      const chart = chartOf(P);
+      gl.uniform3f(loc.uHor, rPlus(a), rMinus(a), captureRadius(a, chart));
       gl.uniform1i(loc.uSteps, Math.max(8, Math.min(MAX_STEPS, Math.round(num(P.steps, 200)))));
       gl.uniform1f(loc.uStepScale, Math.min(4, Math.max(0.1, num(P.stepScale, 1))));
       gl.uniform2f(loc.uRes, W, H);
@@ -906,9 +957,15 @@ void main() {
       const cam = P.camera || { x: 30, y: 0, z: 0, right: [0, 0, 1, 0], up: [0, 0, 0, 1], forward: [0, -1, 0, 0], e0: [1, 0, 0, 0] };
       const vecs = [cam.right, cam.up, cam.forward, cam.e0];
       for (let c = 0; c < 4; c++) for (let m = 0; m < 4; m++) basis[c * 4 + m] = num(vecs[c] && vecs[c][m], 0);
-      const tc = cpu.toTracer(a, num(cam.x, 30), num(cam.y, 0), num(cam.z, 0), basis, TRACER_TMP);
-      gl.uniform3f(loc.uCam, tc.pos[0], tc.pos[1], tc.pos[2]);
-      gl.uniformMatrix4fv(loc.uBasis, false, tc.vecs);
+      gl.uniform1i(loc.uChart, chart);
+      if (chart === 0) {
+        const tc = cpu.toTracer(a, num(cam.x, 30), num(cam.y, 0), num(cam.z, 0), basis, TRACER_TMP);
+        gl.uniform3f(loc.uCam, tc.pos[0], tc.pos[1], tc.pos[2]);
+        gl.uniformMatrix4fv(loc.uBasis, false, tc.vecs);
+      } else {
+        gl.uniform3f(loc.uCam, num(cam.x, 30), num(cam.y, 0), num(cam.z, 0));
+        gl.uniformMatrix4fv(loc.uBasis, false, basis);
+      }
       farBasis(num(P.inclinationDeg, 90), num(P.positionAngleDeg, 0), far);
       far[1] = -far[1]; far[4] = -far[4]; far[7] = -far[7];            // Φ mirror of n̂, right, up
       gl.uniformMatrix3fv(loc.uFar, false, far);
@@ -977,7 +1034,7 @@ void main() {
   SW.KerrGL = {
     create,
     cpu,
-    isco, rPlus, rMinus, photonOrbit, captureRadius, chi, stepOf, farBasis,
+    isco, rPlus, rMinus, photonOrbit, captureRadius, chartOf, chi, stepOf, farBasis,
     MAX_STEPS, R_ESCAPE,
     fragmentSource: { webgl2: FRAG_WEBGL2, webgl1: FRAG_WEBGL1 }
   };
