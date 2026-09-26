@@ -37,6 +37,7 @@
   const TRAIL = 720;                    // trail points per particle
   const A_MAX = 0.998;
   const R_FAR = 400;                    // where the CPU tracer declares a ray escaped
+  const PLUNGE_TILT = 8 * DEG;          // the equatorial free-fall path is tilted this far out of the disc plane (see advancePlunge)
   const RING_PUBLISHED = { m87: { uas: 42, err: 3, label: 'EHT 2019' }, sgra: { uas: 51.8, err: 2.3, label: 'EHT 2022' } };
 
   // ---------------------------------------------------------------- helpers
@@ -251,10 +252,10 @@
 
   // ---------------------------------------------------------------- module state
   let K = null, GLLib = null;         // SW.Kerr, SW.KerrGL (captured in init)
-  let canvas = null, overlay = null, octx = null, ctx2d = null, gl = null, doc = null, labRef = null, toastRef = null;
+  let canvas = null, overlay = null, octx = null, ctx2d = null, fbCanvas = null, gl = null, doc = null, labRef = null;
   let ehtCanvas = null, ehtCtx = null, ehtLum = null, ehtImg = null;
   let chart = null, chartCtx = null;
-  let cssW = 1, cssH = 1, dpr = 1, scale = 1, autoScale = 1;
+  let cssW = 1, cssH = 1, dpr = 1, scale = 0.5, autoScale = 0.5;   // starts at 0.5 so the first frame is prompt; climbs when fast
   let frameMs = 0, slowFrames = 0, fastFrames = 0;
   let hudTimer = 0, statTimer = 0, ringTimer = 0, lastInteract = -1e9, lastRenderNow = 0;
   let dirty = true, idle = false, renderedFull = false, framesDrawn = 0, lastGlScale = 0;
@@ -262,11 +263,11 @@
   let simT = 0;                        // coordinate time, M
   let preset = 'gargantua';
   let starDirs = null, fallbackDirty = true;
-  let fovVertical = true;              // shader's fovDeg convention (checked against the library)
+  const fovVertical = false;           // SW.KerrGL: fovDeg spans the canvas WIDTH; halfWidthM is half the width
 
   const params = {
     massLog: 8, a: 0.9, disc: true, prograde: true, rOut: 20, mdot: 0.1,
-    hotSpot: false, hotR: 8, hotBright: 8, jets: false,
+    hotSpot: false, hotR: 8, hotBright: 8, jets: false, stepScale: 1, discBright: 0.6,
     view: 'color', background: 'stars', steps: 160, resMode: 'auto', resScale: 1, exposure: 1,
     eht: false, beamUas: 20, halfWidthM: 12, pa: 0, distanceMpc: 0,
     observer: 'static', launchMode: false, rIn: 2.32,
@@ -281,9 +282,9 @@
     basis: { right: new Float64Array(4), up: new Float64Array(4), forward: new Float64Array(4), e0: new Float64Array(4) },
     coef: { R: [0, 0, 1], U: [0, -1, 0], F: [-1, 0, 0] },   // camera axes as coefficients on e1..e3
   };
-  const g16 = new Float64Array(16), gi16 = new Float64Array(16);
-  const tmpTet = new Float64Array(16), tmpTet2 = new Float64Array(16);
-  const tmp8 = new Float64Array(8), tmp8b = new Float64Array(8), tmp8c = new Float64Array(8), tmp8d = new Float64Array(8);
+  const g16 = new Float64Array(16);
+  const tmp8 = new Float64Array(8), tmp8b = new Float64Array(8), tmp8c = new Float64Array(48), tmp8d = new Float64Array(8);
+  const far9 = new Float64Array(9);
   const tmpHit = new Float64Array(3), tmpPx = new Float64Array(2), tmpDir = new Float64Array(3);
   const shaderParams = {
     a: 0.9,
@@ -331,14 +332,14 @@
     { id: 'plunge', title: 'Plunge', sub: 'Free fall from 30 M' },
   ];
   const PRESET_DEF = {
-    sgra: { massLog: Math.log10(4.297e6), a: 0.9, incl: 30, eht: true, distanceMpc: 0.008277, beamUas: 20, pa: 0, rOut: 14, rCam: 20, hotSpot: false, view: 'color' },
-    m87: { massLog: Math.log10(6.5e9), a: 0.9, incl: 17, eht: true, distanceMpc: 16.8, beamUas: 20, pa: 288, rOut: 14, rCam: 20, hotSpot: false, view: 'color' },
+    sgra: { massLog: Math.log10(4.297e6), a: 0.9, incl: 30, eht: true, distanceMpc: 0.008277, beamUas: 20, pa: 0, rOut: 9, rCam: 20, hotSpot: false, view: 'color' },
+    m87: { massLog: Math.log10(6.5e9), a: 0.9, incl: 17, eht: true, distanceMpc: 16.8, beamUas: 20, pa: 288, rOut: 9, rCam: 20, hotSpot: false, view: 'color' },
     gargantua: { massLog: 8, a: 0.998, incl: 85, rCam: 18, fov: 60, rOut: 20, disc: true, prograde: true, hotSpot: false, jets: false, view: 'color', phi: 95 },
     cygx1: { massLog: Math.log10(21), a: 0.95, incl: 62, rCam: 24, fov: 55, rOut: 16, disc: true, distanceMpc: 0.0022, hotSpot: false },
     grs1915: { massLog: Math.log10(12), a: 0.98, incl: 66, rCam: 26, fov: 55, rOut: 16, disc: true, jets: true, hotSpot: true, hotR: 6, distanceMpc: 0.0086 },
     schwarzschild: { massLog: 1, a: 0, incl: 75, rCam: 20, fov: 60, rOut: 16, disc: true, prograde: true, hotSpot: false, jets: false, view: 'color' },
     retro: { massLog: 1, a: 0.9, prograde: false, incl: 70, rCam: 20, fov: 60, rOut: 18, disc: true, hotSpot: false },
-    plunge: { massLog: 1, a: 0.9, incl: 90, rCam: 30, fov: 70, rOut: 16, disc: true, observer: 'freefall', hotSpot: false, phi: 95 },
+    plunge: { massLog: 1, a: 0.9, incl: 82, rCam: 30, fov: 70, rOut: 16, disc: true, observer: 'freefall', hotSpot: false, phi: 95 },
   };
 
   function applyPreset(id) {
@@ -362,7 +363,6 @@
   }
 
   // ---------------------------------------------------------------- physics glue
-  function kerr() { return K; }
   function horizons(a) { return K && K.horizons ? K.horizons(a) : Fallback.horizons(a); }
   function isco(a, pro) { return K && K.isco ? K.isco(a, pro) : Fallback.isco(a, pro); }
   function photonOrbit(a, pro) { return K && K.photonOrbit ? K.photonOrbit(a, pro) : Fallback.photonOrbit(a, pro); }
@@ -455,7 +455,7 @@
     } else if (params.observer === 'orbit') {
       const co = circularOrbit(cam.r, a, params.prograde);
       const z0 = K.tetradZAMO(a, x, y, z);
-      const v = clamp(co.vLocal, 0, 0.99) * (params.prograde ? 1 : -1);
+      const v = Number.isFinite(co.vLocal) ? clamp(co.vLocal, -0.99, 0.99) : 0;
       tmpDir[0] = 0; tmpDir[1] = 0; tmpDir[2] = v;
       tet.set(K.boost(z0, tmpDir));
       obs.speed = Math.abs(v);
@@ -464,7 +464,9 @@
     } else {
       const th = Math.acos(clamp(z / Math.max(1e-9, K.rOf(x, y, z, a)), -1, 1));
       obs.insideErgo = K.rOf(x, y, z, a) < ergosphere(a, th);
-      tet.set(obs.insideErgo ? K.tetradZAMO(a, x, y, z) : K.tetradStatic(a, x, y, z));
+      const ts = K.tetradStatic(a, x, y, z);
+      if (ts.zamoFallback) obs.insideErgo = true;
+      tet.set(ts);
     }
     obs.e0t = tet[0] || 1;
     if (K && K.metric && params.observer === 'static' && !obs.insideErgo) {
@@ -482,25 +484,31 @@
   function startDive() {
     if (!K || !K.plungeFromRest) return;
     params.observer = 'freefall';
-    cam.theta = 90 * DEG;
+    cam.theta = PI / 2 - PLUNGE_TILT;
     obs.plunge = K.plungeFromRest(params.a, cam.r);
     obs.diving = true; obs.tau = 0; obs.tCoord = 0; obs.inside = false; obs.stopped = false;
     advancePlunge(0);
     dirty = true;
     if (uiRefs) syncControls();
   }
-  // Advance the plunge by dτ (M) and place the camera. The library integrates from φ = 0 along
-  // +x; Kerr is axisymmetric so the path is rotated about z to the camera's azimuth.
+  // Advance the plunge by dτ (M) and place the camera. The library integrates the exact equatorial
+  // geodesic from φ = 0 along +x. Kerr is axisymmetric, so rotating the path about z to the camera's
+  // azimuth is exact. It is also tilted PLUNGE_TILT (8°) out of the disc plane so the thin disc does
+  // not fill half the view once the camera is inside r_out: for L = 0 radial infall the off-plane
+  // correction to the path is O(a² sin² 8°) ≈ 1 % in the θ-force and is ignored (stated in the panel).
   function advancePlunge(dTau) {
     const pl = obs.plunge; if (!pl) return;
     const rp = horizons(params.a).rPlus;
     if (obs.stopped) dTau = 0;
     const st = pl.step(dTau);
     obs.tau = st.tau; obs.tCoord = st.tCoord; obs.r = st.r;
+    const ct = Math.cos(PLUNGE_TILT), stl = Math.sin(PLUNGE_TILT);
+    const x1 = st.x * ct - st.z * stl, z1 = st.x * stl + st.z * ct, y1 = st.y;
     const c = Math.cos(cam.phi), s = Math.sin(cam.phi);
-    obs.pos[0] = st.x * c - st.y * s; obs.pos[1] = st.x * s + st.y * c; obs.pos[2] = st.z;
+    obs.pos[0] = x1 * c - y1 * s; obs.pos[1] = x1 * s + y1 * c; obs.pos[2] = z1;
     const u = st.uMu;
-    obs.uMu[0] = u[0]; obs.uMu[1] = u[1] * c - u[2] * s; obs.uMu[2] = u[1] * s + u[2] * c; obs.uMu[3] = u[3];
+    const ux = u[1] * ct - u[3] * stl, uz = u[1] * stl + u[3] * ct, uy = u[2];
+    obs.uMu[0] = u[0]; obs.uMu[1] = ux * c - uy * s; obs.uMu[2] = ux * s + uy * c; obs.uMu[3] = uz;
     obs.inside = st.r < rp;
     if (st.r <= 0.3 * rp) obs.stopped = true;
     // local speed relative to the ZAMO at the same point: γ = −g(u, e0_zamo)
@@ -518,8 +526,7 @@
   function pixelDir(px, py, out) {
     const t = Math.tan(cam.fov / 2);
     const nx = (px / cssW * 2 - 1), ny = (1 - py / cssH * 2);
-    const sx = fovVertical ? nx * t * (cssW / cssH) : nx * t;
-    const sy = fovVertical ? ny * t : ny * t * (cssH / cssW);
+    const sx = nx * t, sy = ny * t * (cssH / cssW);   // as the shader: tan(fov/2) across the width
     const c = obs.coef;
     let dx = sx * c.R[0] + sy * c.U[0] + c.F[0];
     let dy = sx * c.R[1] + sy * c.U[1] + c.F[1];
@@ -531,69 +538,52 @@
   // Step rule for CPU geodesics: h = 0.04·max(0.25, r − r_+), never below 0.004 (near the horizon).
   function stepFor(r, rPlus) { return Math.max(0.004, 0.04 * Math.max(0.25, r - rPlus)); }
 
+  // The shader's far-mode basis (columns n̂, screen-right, screen-up) for the current i and PA.
+  function farBasisOf() {
+    if (GLLib && GLLib.farBasis) return GLLib.farBasis(cam.theta / DEG, params.pa, far9);
+    const i = cam.theta, pa = params.pa * DEG, si = Math.sin(i), ci = Math.cos(i), sp = Math.sin(pa), cp = Math.cos(pa);
+    far9[0] = si; far9[1] = 0; far9[2] = ci;
+    far9[3] = 0 * cp + ci * sp; far9[4] = cp; far9[5] = -si * sp;
+    far9[6] = -ci * cp; far9[7] = sp; far9[8] = si * cp;
+    return far9;
+  }
   // Trace the tapped pixel's null geodesic on the CPU until it crosses z = 0 (the disc plane).
   // Returns true and fills out[0..2] with the crossing point; false when the ray is captured or
   // escapes without crossing. Far (EHT) mode uses the flat orthographic inverse instead.
   function screenToPlane(px, py, out) {
     if (params.eht) {
-      const s = obs.farScale || 1;
-      const ax = (px - cssW / 2) / s, by = (cssH / 2 - py) / s;
-      const pa = params.pa * DEG, ca = Math.cos(pa), sa = Math.sin(pa);
-      const al = ax * ca + by * sa, be = -ax * sa + by * ca;
-      const i = cam.theta, ci = Math.cos(i), si = Math.sin(i);
-      if (Math.abs(ci) < 1e-3) return false;
-      // image plane axes: α̂ = φ̂(φ_o), β̂ = n̂ × α̂; ray parallel to −n̂ hits z = 0 at P = α α̂ + β β̂ + λ n̂ with z = 0
-      const cp = Math.cos(cam.phi), sp = Math.sin(cam.phi);
-      const alx = -sp, aly = cp, alz = 0;
-      const bex = -ci * cp, bey = -ci * sp, bez = si;
-      const nx = si * cp, ny = si * sp, nz = ci;
-      const lam = -(al * alz + be * bez) / nz;
-      out[0] = al * alx + be * bex + lam * nx; out[1] = al * aly + be * bey + lam * ny; out[2] = 0;
-      return Math.hypot(out[0], out[1]) > horizons(params.a).rPlus;
+      const sc = obs.farScale || 1;
+      const al = (px - cssW / 2) / sc, be = (cssH / 2 - py) / sc;
+      const F = farBasisOf();
+      // ray parallel to −n̂ from P0 = α α̂ + β β̂ (+ R n̂) hits z = 0 at λ = P0z / nz
+      const nz = F[2];
+      if (Math.abs(nz) < 1e-3) return false;
+      const p0x = al * F[3] + be * F[6], p0y = al * F[4] + be * F[7], p0z = al * F[5] + be * F[8];
+      const lam = -p0z / nz;
+      out[0] = p0x + lam * F[0]; out[1] = p0y + lam * F[1]; out[2] = 0;
+      return Math.hypot(out[0], out[1]) > horizons(params.a).rPlus * 1.05;
     }
-    if (!K || !K.nullMomentum || !K.rk4) return false;
+    if (!K || !K.nullMomentum || !K.integrate) return false;
     pixelDir(px, py, tmpDir);
     const a = params.a, s = tmp8, pos = obs.pos;
+    // past-directed momentum (SW.Kerr default): integrating forward in λ walks the received ray
+    // away from the camera, exactly as the shader does
     const p = K.nullMomentum(a, pos[0], pos[1], pos[2], obs.tetrad, tmpDir);
     s[0] = 0; s[1] = pos[0]; s[2] = pos[1]; s[3] = pos[2]; s[4] = p[0]; s[5] = p[1]; s[6] = p[2]; s[7] = p[3];
     const rp = horizons(a).rPlus;
-    // direction check: the trace must move away from the camera along the tapped direction
-    tmp8b.set(s); K.rk4(a, tmp8b, 0.01, tmp8c);
-    const b = obs.basis;
-    const mx = tmp8b[1] - s[1], my = tmp8b[2] - s[2], mz = tmp8b[3] - s[3];
-    const want = tmpDir[0] * (b.forward[1] * 0 + 1); // placeholder to keep tmpDir referenced
-    const fdot = mx * (b.right[1] * tmpDir[0] + b.up[1] * tmpDir[1] + b.forward[1] * tmpDir[2]) + my * (b.right[2] * tmpDir[0] + b.up[2] * tmpDir[1] + b.forward[2] * tmpDir[2]) + mz * (b.right[3] * tmpDir[0] + b.up[3] * tmpDir[1] + b.forward[3] * tmpDir[2]);
-    // (tmpDir is in tetrad coefficients; the projection above uses the basis' spatial parts only as a sign test)
-    if (fdot < 0 && want) { s[5] = -s[5]; s[6] = -s[6]; s[7] = -s[7]; s[4] = -s[4]; }
-    let zPrev = s[3], xPrev = s[1], yPrev = s[2];
-    for (let i = 0; i < 4000; i++) {
-      const r = K.rOf(s[1], s[2], s[3], a);
-      if (r < rp * 1.001) return false;
-      if (r > R_FAR) return false;
-      K.rk4(a, s, stepFor(r, rp), tmp8c);
-      const z = s[3];
-      if (i > 0 && (z === 0 || (z > 0) !== (zPrev > 0))) {
-        const f = zPrev / (zPrev - z);
-        out[0] = xPrev + (s[1] - xPrev) * f; out[1] = yPrev + (s[2] - yPrev) * f; out[2] = 0;
-        const rr = Math.hypot(out[0], out[1]);
-        if (rr > rp * 1.05) return true;
-        return false;
-      }
-      zPrev = z; xPrev = s[1]; yPrev = s[2];
-    }
-    return false;
+    const res = K.integrate(a, s, { maxSteps: 6000, discRIn: rp * 1.05, discROut: 300, stopAtR: R_FAR, tmp: tmp8c });
+    if (res.reason !== 'disc' || !res.hit) return false;
+    out[0] = res.hit.x; out[1] = res.hit.y; out[2] = 0;
+    return true;
   }
 
   // Flat projection of a KS point through the current camera (near: pinhole; far: orthographic).
   // Stated in the panel: trails are NOT lensed. Returns false when behind the camera.
   function project(x, y, z, w, h, out) {
     if (params.eht) {
-      const s = obs.farScale || 1;
-      const cp = Math.cos(cam.phi), sp = Math.sin(cam.phi), i = cam.theta, ci = Math.cos(i), si = Math.sin(i);
-      const al = -sp * x + cp * y, be = -ci * cp * x - ci * sp * y + si * z;
-      const pa = params.pa * DEG, ca = Math.cos(pa), sa = Math.sin(pa);
-      const ax = al * ca - be * sa, by = al * sa + be * ca;
-      out[0] = w / 2 + ax * s * (w / cssW); out[1] = h / 2 - by * s * (h / cssH);
+      const sc = obs.farScale || 1, F = farBasisOf();
+      const al = x * F[3] + y * F[4] + z * F[5], be = x * F[6] + y * F[7] + z * F[8];
+      out[0] = w / 2 + al * sc * (w / cssW); out[1] = h / 2 - be * sc * (h / cssH);
       return true;
     }
     const b = obs.basis, pos = obs.pos;
@@ -602,8 +592,7 @@
     if (zf < 0.05) return false;
     const xr = dx * b.right[1] + dy * b.right[2] + dz * b.right[3];
     const yu = dx * b.up[1] + dy * b.up[2] + dz * b.up[3];
-    const t = Math.tan(cam.fov / 2);
-    const f = fovVertical ? (h / 2) / t : (w / 2) / t;
+    const f = (w / 2) / Math.tan(cam.fov / 2);
     out[0] = w / 2 + xr / zf * f; out[1] = h / 2 - yu / zf * f;
     return true;
   }
@@ -628,16 +617,7 @@
       p = K.timelikeFromLocal(a, x, y, 0, z0, tmpDir);
     } else {
       const v = Math.hypot(vr, vphi) || 1; tmpDir[0] /= v; tmpDir[2] /= v;
-      p = K.nullMomentum(a, x, y, 0, z0, tmpDir);
-      // the photon must move along its stated direction (nullMomentum may be past-directed)
-      tmp8b[0] = 0; tmp8b[1] = x; tmp8b[2] = y; tmp8b[3] = 0; tmp8b[4] = p[0]; tmp8b[5] = p[1]; tmp8b[6] = p[2]; tmp8b[7] = p[3];
-      K.rk4(a, tmp8b, 0.01, tmp8c);
-      const mx = tmp8b[1] - x, my = tmp8b[2] - y;
-      const phx = -y, phy = x;   // φ̂ direction (flat)
-      const rad = Math.hypot(x, y) || 1;
-      const along = (mx * x + my * y) / rad * tmpDir[0] + (mx * phx + my * phy) / rad * tmpDir[2];
-      if (along < 0) { p[0] = -p[0]; p[1] = -p[1]; p[2] = -p[2]; p[3] = -p[3]; }
-      if (p[0] > 0) { /* ensure E = −p_t > 0 for readouts */ p[0] = -p[0]; p[1] = -p[1]; p[2] = -p[2]; p[3] = -p[3]; }
+      p = K.nullMomentum(a, x, y, 0, z0, tmpDir, undefined, true);   // future-directed: emitted along dir
     }
     const o = i * 8;
     P.s[o] = simT; P.s[o + 1] = x; P.s[o + 2] = y; P.s[o + 3] = 0; P.s[o + 4] = p[0]; P.s[o + 5] = p[1]; P.s[o + 6] = p[2]; P.s[o + 7] = p[3];
@@ -715,10 +695,11 @@
     for (let i = 0; i < maxSteps; i++) {
       const r = K.rOf(s[1], s[2], s[3], a);
       if (r < rp * 1.002) return -1;                 // captured
+      if (r > 5 * ra) return ra;                      // unbound: never a periapsis below ra
       if (r < rMin) rMin = r;
       if (i > 5 && r > rPrev && rMin < 0.98 * ra) return rMin;   // turned around
       rPrev = r;
-      K.rk4(a, s, stepFor(r, rp), tmp8c);
+      K.rk4(a, s, Math.min(0.5, stepFor(r, rp)), tmp8c);
     }
     return rMin;
   }
@@ -728,17 +709,20 @@
       params.a = 0.9; updateDerived(); syncControls();
       const ra = 15;
       // find the separatrix: largest v that is captured, then launch just above it
-      let lo = 0.02, hi = 0.9;
-      for (let k = 0; k < 40; k++) { const mid = 0.5 * (lo + hi); if (periapsisOf(ra, mid, 20000) < 0) lo = mid; else hi = mid; }
-      const v = hi * 1.0015;
+      // bracket: slow → captured, the circular speed → not; bisect to the separatrix, launch just above it
+      let lo = 0.05, hi = Math.abs(circularOrbit(ra, params.a, true).vLocal);
+      for (let k = 0; k < 36; k++) { const mid = 0.5 * (lo + hi); if (periapsisOf(ra, mid, 20000) < 0) lo = mid; else hi = mid; }
+      const v = hi * 1.001;
       const i = launch(ra, 0, 0, v, 1);
       if (i >= 0) { P.rApo[i] = ra; }
     } else if (kind === 'dragged') {
       if (params.a < 0.5) { params.a = 0.9; updateDerived(); syncControls(); }
       // retrograde local velocity just inside the static limit (r_E = 2 at the equator): the ZAMO
       // itself is dragged around faster than the particle moves backwards through it.
-      const r0 = 1.9 * Math.max(1, ergosphere(params.a, PI / 2) / 2);
-      launch(r0, 0, 0, -0.55, 1);
+      // slightly below the (unstable) retrograde circular speed at 4.2 M: the particle whirls
+      // backwards a few times, spirals in through the static limit (r = 2) and is swept forward.
+      const r0 = 4.2, co = circularOrbit(r0, params.a, false);
+      launch(r0, 0, 0, Number.isFinite(co.vLocal) ? 0.985 * co.vLocal : -0.5, 1);
     } else if (kind === 'skimmer') {
       const rph = photonOrbit(params.a, params.prograde);
       launch(rph, 0, 0, params.prograde ? 1 : -1, 0);
@@ -833,22 +817,58 @@
     if (!Number.isFinite(uasPerM)) return 0;
     return params.beamUas / 2.3548 / uasPerM / mPerPx;
   }
+  // EHT post-pass: the GL frame is downsampled onto a small working canvas (EHT_W px across the
+  // image width), its luminance linearised (the shader encodes with 1/2.2), convolved with the
+  // Gaussian beam (separable, σ in working pixels from the μas/M scale), normalised to the peak and
+  // mapped through the radio colour ramp. A hand-rolled convolution instead of ctx.filter = 'blur()'
+  // because the canvas filter misreads the WebGL source on some GL backends (SwiftShader).
+  const EHT_W = 160;
+  let ehtTmp = null, ehtKernel = null, ehtKernelSigma = -1;
   function ehtPostProcess() {
     if (!ehtCtx || !gl) return;
-    const w = canvas.width, h = canvas.height;
-    if (ehtCanvas.width !== w || ehtCanvas.height !== h) { ehtCanvas.width = w; ehtCanvas.height = h; ehtLum = null; }
-    const sig = beamSigmaPx(w);
+    const W = EHT_W, H = Math.max(8, Math.round(EHT_W * canvas.height / Math.max(1, canvas.width)));
+    if (ehtCanvas.width !== W || ehtCanvas.height !== H) { ehtCanvas.width = W; ehtCanvas.height = H; ehtLum = null; }
     ehtCtx.setTransform(1, 0, 0, 1, 0, 0);
-    ehtCtx.filter = sig > 0.3 ? `blur(${sig.toFixed(2)}px)` : 'none';
-    ehtCtx.fillStyle = '#000'; ehtCtx.fillRect(0, 0, w, h);
-    ehtCtx.drawImage(canvas, 0, 0);
-    ehtCtx.filter = 'none';
+    ehtCtx.imageSmoothingEnabled = true;
+    ehtCtx.fillStyle = '#000'; ehtCtx.fillRect(0, 0, W, H);
+    ehtCtx.drawImage(canvas, 0, 0, W, H);
     let img;
-    try { img = ehtCtx.getImageData(0, 0, w, h); } catch (e) { return; }
-    const d = img.data, n = w * h;
-    if (!ehtLum || ehtLum.length !== n) ehtLum = new Float32Array(n);
-    let mx = 1e-6;
-    for (let i = 0; i < n; i++) { const o = i * 4; const l = 0.2126 * d[o] + 0.7152 * d[o + 1] + 0.0722 * d[o + 2]; ehtLum[i] = l; if (l > mx) mx = l; }
+    try { img = ehtCtx.getImageData(0, 0, W, H); } catch (e) { return; }
+    const d = img.data, n = W * H;
+    if (!ehtLum || ehtLum.length !== n) { ehtLum = new Float32Array(n); ehtTmp = new Float32Array(n); }
+    for (let i = 0; i < n; i++) { const o = i * 4; ehtLum[i] = Math.pow((0.2126 * d[o] + 0.7152 * d[o + 1] + 0.0722 * d[o + 2]) / 255, 2.2); }
+    const sig = beamSigmaPx(W);
+    if (sig > 0.3) {
+      if (ehtKernelSigma !== sig) {
+        const R = Math.min(Math.ceil(3 * sig), W);
+        ehtKernel = new Float32Array(2 * R + 1);
+        let sum = 0;
+        for (let k = -R; k <= R; k++) { const v = Math.exp(-0.5 * k * k / (sig * sig)); ehtKernel[k + R] = v; sum += v; }
+        for (let k = 0; k < ehtKernel.length; k++) ehtKernel[k] /= sum;
+        ehtKernelSigma = sig;
+      }
+      const R = (ehtKernel.length - 1) >> 1;
+      // horizontal pass (edges clamp to black, like a field of view on an empty sky)
+      for (let y = 0; y < H; y++) {
+        const row = y * W;
+        for (let x = 0; x < W; x++) {
+          let acc = 0;
+          const k0 = Math.max(-R, -x), k1 = Math.min(R, W - 1 - x);
+          for (let k = k0; k <= k1; k++) acc += ehtLum[row + x + k] * ehtKernel[k + R];
+          ehtTmp[row + x] = acc;
+        }
+      }
+      for (let x = 0; x < W; x++) {
+        for (let y = 0; y < H; y++) {
+          let acc = 0;
+          const k0 = Math.max(-R, -y), k1 = Math.min(R, H - 1 - y);
+          for (let k = k0; k <= k1; k++) acc += ehtTmp[(y + k) * W + x] * ehtKernel[k + R];
+          ehtLum[y * W + x] = acc;
+        }
+      }
+    }
+    let mx = 1e-9;
+    for (let i = 0; i < n; i++) if (ehtLum[i] > mx) mx = ehtLum[i];
     const inv = 255 / mx;
     for (let i = 0; i < n; i++) { const o = i * 4; const k = Math.min(255, (ehtLum[i] * inv) | 0) * 3; d[o] = RADIO_LUT[k]; d[o + 1] = RADIO_LUT[k + 1]; d[o + 2] = RADIO_LUT[k + 2]; d[o + 3] = 255; }
     ehtCtx.putImageData(img, 0, 0);
@@ -881,23 +901,30 @@
   }
 
   // ---------------------------------------------------------------- init
-  function init({ canvas: cv, panel, ui, lab, toast }) {
-    canvas = cv; labRef = lab; toastRef = toast || (() => {}); doc = cv.ownerDocument;
+  function init({ canvas: cv, panel, ui, lab }) {
+    canvas = cv; labRef = lab; doc = cv.ownerDocument;
     K = SW.Kerr || null; GLLib = SW.KerrGL || null;
-    if (K && K.lookAt && K.lookAt.fovConvention === 'horizontal') fovVertical = false;
-    if (GLLib && GLLib.fovConvention === 'horizontal') fovVertical = false;
     if (GLLib && GLLib.create && !MOD._debug.force2D) {
       try { gl = GLLib.create(cv, { webgl1Fallback: true }); } catch (e) { gl = null; }
     }
     if (gl) {
       try {
-        const W = (gl.maxTextureSize && gl.maxTextureSize >= 4096) ? 4096 : 2048;
+        let maxTex = 2048;
+        try { maxTex = gl.gl.getParameter(gl.gl.MAX_TEXTURE_SIZE) | 0; } catch (e) { /* keep 2048 */ }
+        const W = maxTex >= 4096 ? 4096 : 2048;
         sky = buildSkyCanvas(W, doc);
         gl.setSky(sky);
         MOD._debug.skyWidth = W;
       } catch (e) { /* sky optional */ }
     } else {
-      ctx2d = cv.getContext('2d');
+      // The GL probe may have claimed the canvas' context type; then draw the sketch on our own canvas.
+      try { ctx2d = cv.getContext('2d'); } catch (e) { ctx2d = null; }
+      if (!ctx2d) {
+        fbCanvas = doc.createElement('canvas');
+        fbCanvas.className = 'lab-canvas'; fbCanvas.setAttribute('aria-hidden', 'true'); fbCanvas.style.pointerEvents = 'none';
+        cv.parentNode.insertBefore(fbCanvas, cv.nextSibling);
+        ctx2d = fbCanvas.getContext('2d');
+      }
       buildStarDirs();
     }
     overlay = doc.createElement('canvas');
@@ -962,7 +989,7 @@
 
     // Controls
     const sc = ui.section('Controls');
-    refs.mass = ui.slider({ id: 'bh-mass', label: 'Mass', min: Math.log10(3), max: 10, step: 0.02, value: params.massLog, format: (v) => fmtMass(Math.pow(10, v)), onInput: (v) => { params.massLog = v; updateDerived(); touch(); updateStats(); } });
+    refs.mass = ui.slider({ id: 'bh-mass', label: 'Mass', min: 0.5, max: 10, step: 0.01, value: params.massLog, format: (v) => fmtMass(Math.pow(10, v)), onInput: (v) => { params.massLog = v; updateDerived(); touch(); updateStats(); } });
     refs.spin = ui.slider({ id: 'bh-spin', label: 'Spin a', min: 0, max: A_MAX, step: 0.002, value: params.a, format: (v) => v.toFixed(3), onInput: (v) => { params.a = v; updateDerived(); computeLightCurve(); touch(); updateStats(); } });
     refs.disc = ui.toggle({ id: 'bh-disc', label: 'Accretion disc (from the ISCO)', checked: params.disc, onChange: (on) => { params.disc = on; touch(); } });
     refs.prograde = ui.toggle({ id: 'bh-prograde', label: 'Prograde disc (retrograde when off)', checked: params.prograde, onChange: (on) => { params.prograde = on; updateDerived(); computeLightCurve(); touch(); updateStats(); syncControls(); } });
@@ -994,7 +1021,7 @@
     panel.append(se);
 
     // Observer
-    const so = ui.section('Observer', 'Who holds the camera: a static observer (impossible inside the ergosphere), a zero-angular-momentum observer, an observer on the circular orbit at the camera radius, or one in free fall.');
+    const so = ui.section('Observer', 'Who holds the camera: a static observer (impossible inside the ergosphere), a zero-angular-momentum observer, an observer on the circular orbit at the camera radius, or one in free fall. Dive follows the exact radial free-fall geodesic from rest (zero angular momentum), tilted 8° out of the disc plane so the disc stays in view.');
     refs.obsMode = segGroup(ui, 'bh-observer', 'Observer', [['static', 'Static'], ['zamo', 'ZAMO'], ['orbit', 'Orbit'], ['freefall', 'Free fall']], params.observer, (v) => { params.observer = v; if (v !== 'freefall') resetPlunge(); touch(); });
     const row = ui.el('div', 'btn-row');
     refs.dive = ui.button({ id: 'bh-dive', label: 'Dive', primary: true, small: true, onClick: () => startDive(), title: 'Free fall from rest at the camera radius' });
@@ -1126,7 +1153,7 @@
     s('r', rr.toFixed(3) + ' M', fmtKm(rr * KM_PER_M_SUN * massMsun()));
     s('dr', (rr - hz.rPlus).toFixed(3) + ' M', rr < hz.rPlus ? 'inside the horizon' : 'outside');
     s('earth', fmtTime(obs.tCoord * Msec), 'coordinate time = a distant clock');
-    s('v', (obs.speed * 100).toFixed(1) + ' % c', obs.diving ? 'relative to the local ZAMO' : 'at rest');
+    s('v', obs.inside ? '—' : (obs.speed * 100).toFixed(1) + ' % c', obs.inside ? 'no ZAMO inside the horizon' : (obs.diving ? 'relative to the local ZAMO' : 'at rest'));
     r.chip.hidden = !obs.inside;
     r.chipErgo.hidden = !obs.insideErgo;
     r.dive.disabled = !(K && K.plungeFromRest) || obs.diving;
@@ -1203,7 +1230,7 @@
       if (drag && drag.id === e.pointerId) {
         const [x, y] = pos(e);
         if (!drag.moved) {
-          if (screenToPlane(x, y, tmpHit)) { launch(tmpHit[0], tmpHit[1], 0, 0, 1); toastRef && toastRef(''); }
+          if (screenToPlane(x, y, tmpHit)) launch(tmpHit[0], tmpHit[1], 0, 0, 1);
         } else if (drag.mode === 'launch') {
           if (screenToPlane(drag.x0, drag.y0, tmpHit)) {
             const x0 = tmpHit[0], y0 = tmpHit[1];
@@ -1255,12 +1282,14 @@
     if (!canvas) return;
     const s = gl ? Math.min(1, dpr) * scale : Math.min(dpr, 2);
     const w = Math.max(2, Math.round(cssW * s)), h = Math.max(2, Math.round(cssH * s));
-    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; fallbackDirty = true; dirty = true; }
+    const target = fbCanvas || canvas;
+    if (target.width !== w || target.height !== h) { target.width = w; target.height = h; fallbackDirty = true; dirty = true; }
   }
   function resize(w, h, d) {
     cssW = w; cssH = h; dpr = d;
     if (overlay) { overlay.width = Math.round(w * d); overlay.height = Math.round(h * d); overlay.hidden = canvas.hidden; }
-    if (chart) { const cw = chart.clientWidth || 300; chart.width = Math.round(cw * d); chart.height = Math.round(90 * d); }
+    if (fbCanvas) fbCanvas.hidden = canvas.hidden;
+    if (chart) { const cw = chart.clientWidth || 300; chart.width = Math.round(cw * d); chart.height = Math.round(90 * d); drawChart(); }
     applyGlSize();
     fallbackDirty = true; dirty = true; ehtImg = null;
   }
@@ -1275,7 +1304,7 @@
     if (params.observer === 'freefall' && obs.diving && !obs.stopped) return true;
     if (params.observer === 'orbit') return true;
     if (liveCount > 0) return true;
-    if (params.disc && (params.hotSpot || true)) return true;   // the disc texture shears with time
+    if (params.disc) return true;   // the disc's filament texture and hot spot shear with time
     return false;
   }
   function frame(simDt, realDt, now) {
@@ -1285,7 +1314,7 @@
     if (running) {
       const dT = simDt * TIME_SCALE;
       simT += dT;
-      if (params.observer === 'orbit') { const co = circularOrbit(cam.r, params.a, params.prograde); cam.phi += co.Omega * dT; }
+      if (params.observer === 'orbit') { const co = circularOrbit(cam.r, params.a, params.prograde); if (Number.isFinite(co.Omega)) cam.phi += co.Omega * dT; }
       if (params.observer === 'freefall' && obs.diving) advancePlunge(dT);
       if (liveCount > 0 || lastLaunched >= 0) stepParticles(dT);
       let live = 0; for (let i = 0; i < MAXP; i++) if (P.state[i] === 1) live++;
@@ -1310,7 +1339,7 @@
     } else { if (need) { drawFallback(); dirty = false; renderedFull = true; } idle = !need; }
     drawOverlay();
     if (params.eht && now - ringTimer > 1000 && ehtLum) { ringTimer = now; measureRing(); }
-    if (now - hudTimer > 200) { hudTimer = now; updateHud(); updateParticleStats(); if (params.observer === 'freefall') updateObserverStats(); if (params.hotSpot) drawChart(); }
+    if (now - hudTimer > 200) { hudTimer = now; updateHud(); updateParticleStats(); if (params.observer === 'freefall') updateObserverStats(); drawChart(); }
     if (now - statTimer > 1000) { statTimer = now; updateStats(); }
   }
 
@@ -1319,12 +1348,15 @@
     sp.a = params.a;
     sp.mode = params.eht ? 'far' : 'near';
     sp.fovDeg = cam.fov / DEG; sp.halfWidthM = params.halfWidthM; sp.inclinationDeg = cam.theta / DEG; sp.positionAngleDeg = params.pa;
-    sp.steps = params.steps | 0; sp.stepScale = 1;
+    sp.steps = params.steps | 0; sp.stepScale = params.stepScale;
     const d = sp.disc;
-    d.on = params.disc; d.prograde = params.prograde; d.rIn = params.rIn; d.rOut = params.rOut; d.brightness = 1; d.mdot = params.mdot;
+    d.on = params.disc; d.prograde = params.prograde; d.rIn = params.rIn; d.rOut = params.rOut; d.brightness = params.discBright; d.mdot = params.mdot;
     d.hotSpot.on = params.hotSpot; d.hotSpot.r = Math.max(params.hotR, params.rIn); d.hotSpot.phaseRad = 0; d.hotSpot.sizeM = 0.6 + 0.05 * params.hotR; d.hotSpot.brightness = params.hotBright;
     sp.jets.on = params.jets;
-    sp.view = params.view; sp.exposure = params.exposure; sp.background = params.background;
+    sp.view = params.view;
+    sp.background = params.eht ? 'black' : params.background;   // the radio sky is empty: stars would dominate the normalised image
+    // far mode: keep the tone map in its linear regime (the post-pass normalises to the peak anyway)
+    sp.exposure = params.eht ? params.exposure * 0.08 : params.exposure;
     sp.time = simT; sp.blurPx = 0; sp.resolutionScale = scale;
     obs.farScale = (cssW / 2) / params.halfWidthM;   // css px per M in far mode
     gl.render(sp);
@@ -1334,7 +1366,7 @@
   function drawFallback() {
     if (!ctx2d) return;
     fallbackDirty = false;
-    const c = ctx2d, w = canvas.width, h = canvas.height;
+    const w = (fbCanvas || canvas).width, h = (fbCanvas || canvas).height, c = ctx2d;
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.fillStyle = '#04070F'; c.fillRect(0, 0, w, h);
     const rc = params.eht ? 60 : cam.r;
@@ -1494,12 +1526,12 @@
       len = 20; while (len * pxPerUas > w * 0.35) len /= 2; while (len * pxPerUas < w * 0.12) len *= 2;
       label = `${len} μas`; len *= pxPerUas;
     } else { len = 5; label = '5 M (set a preset with a distance for μas)'; len *= pxPerM; }
-    const x0 = 16 * d, y0 = h - 40 * d;
+    const x0 = 16 * d, y0 = 44 * d;
     octx.strokeStyle = '#E6E3D8'; octx.lineWidth = 2 * d;
     octx.beginPath(); octx.moveTo(x0, y0); octx.lineTo(x0 + len, y0); octx.stroke();
     octx.beginPath(); octx.moveTo(x0, y0 - 4 * d); octx.lineTo(x0, y0 + 4 * d); octx.moveTo(x0 + len, y0 - 4 * d); octx.lineTo(x0 + len, y0 + 4 * d); octx.stroke();
     octx.fillStyle = '#E6E3D8'; octx.font = `${12 * d}px "IBM Plex Mono", Menlo, monospace`;
-    octx.fillText(label, x0, y0 - 8 * d);
+    octx.fillText(label, x0, y0 - 10 * d);
     const pub = RING_PUBLISHED[preset];
     octx.fillStyle = '#9AA3B8';
     octx.fillText(`beam ${params.beamUas} μas · i ${(cam.theta / DEG).toFixed(0)}° · PA ${params.pa.toFixed(0)}°${pub ? ' · ' + pub.label + ' ring ' + pub.uas + ' μas' : ''}`, x0, y0 + 18 * d);
@@ -1521,8 +1553,8 @@
     title: 'Black hole',
     hint: 'Drag to orbit · scroll or pinch to zoom · tap to drop a particle · E for the EHT view',
     init,
-    enter() { if (overlay) overlay.hidden = false; slowFrames = fastFrames = 0; hudTimer = 0; dirty = true; renderedFull = false; if (labRef) labRef.setHint(params.eht ? 'Drag to change inclination and position angle · scroll to zoom the image plane' : MOD.hint); },
-    leave() { if (overlay) overlay.hidden = true; drag = null; pointers.clear(); },
+    enter() { if (overlay) overlay.hidden = false; if (fbCanvas) fbCanvas.hidden = false; slowFrames = fastFrames = 0; hudTimer = 0; dirty = true; renderedFull = false; if (labRef) labRef.setHint(params.eht ? 'Drag to change inclination and position angle · scroll to zoom the image plane' : MOD.hint); },
+    leave() { if (overlay) overlay.hidden = true; if (fbCanvas) fbCanvas.hidden = true; drag = null; pointers.clear(); },
     resize,
     frame,
     reset() { applyPreset(preset); syncControls(); computeLightCurve(); },
@@ -1536,6 +1568,7 @@
       set(patch) { Object.assign(params, patch); updateDerived(); computeLightCurve(); syncControls(); dirty = true; fallbackDirty = true; },
       setCamera(o) { if (o.r != null) cam.r = o.r; if (o.theta != null) cam.theta = o.theta * DEG; if (o.phi != null) cam.phi = o.phi * DEG; if (o.fov != null) cam.fov = o.fov * DEG; computeLightCurve(); syncControls(); dirty = true; fallbackDirty = true; },
       setEht, startDive, advancePlunge, launch, launchDemo, clearParticles, screenToPlane, measureRing, ehtPostProcess,
+      advance(dT) { simT += dT; stepParticles(dT); let live = 0; for (let i = 0; i < MAXP; i++) if (P.state[i] === 1) live++; liveCount = live; updateParticleStats(); },
       lockScale(v) { params.resMode = v ? String(v) : 'auto'; params.resScale = v || 1; if (uiRefs) uiRefs.res.input.value = params.resMode; dirty = true; },
       get overlay() { return overlay; }, get ehtCanvas() { return ehtCanvas; }, get K() { return K; },
     },
