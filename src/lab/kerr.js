@@ -267,7 +267,8 @@
 
   const params = {
     massLog: 8, a: 0.9, disc: true, prograde: true, rOut: 20, mdot: 0.1,
-    hotSpot: false, hotR: 8, hotBright: 8, jets: false, stepScale: 1, discBright: 0.6,
+    hotSpot: false, hotR: 8, hotBright: 8, jets: false, stepScale: 1, discBright: 1,
+    palette: 'warm', discThickness: 0, physT: 1e5,   // palette: 'physical' = blackbody at the NT temperature; 'warm' = film-style 9,000 K ramp (display only)
     view: 'color', background: 'stars', steps: 160, resMode: 'auto', resScale: 1, exposure: 1,
     eht: false, beamUas: 20, halfWidthM: 12, pa: 0, distanceMpc: 0,
     observer: 'static', launchMode: false, rIn: 2.32,
@@ -332,14 +333,14 @@
     { id: 'plunge', title: 'Plunge', sub: 'Free fall from 30 M' },
   ];
   const PRESET_DEF = {
-    sgra: { massLog: Math.log10(4.297e6), a: 0.9, incl: 30, eht: true, distanceMpc: 0.008277, beamUas: 20, pa: 0, rOut: 9, rCam: 20, hotSpot: false, view: 'color' },
-    m87: { massLog: Math.log10(6.5e9), a: 0.9, incl: 17, eht: true, distanceMpc: 16.8, beamUas: 20, pa: 288, rOut: 9, rCam: 20, hotSpot: false, view: 'color' },
-    gargantua: { massLog: 8, a: 0.998, incl: 85, rCam: 18, fov: 60, rOut: 20, disc: true, prograde: true, hotSpot: false, jets: false, view: 'color', phi: 95 },
-    cygx1: { massLog: Math.log10(21), a: 0.95, incl: 62, rCam: 24, fov: 55, rOut: 16, disc: true, distanceMpc: 0.0022, hotSpot: false },
-    grs1915: { massLog: Math.log10(12), a: 0.98, incl: 66, rCam: 26, fov: 55, rOut: 16, disc: true, jets: true, hotSpot: true, hotR: 6, distanceMpc: 0.0086 },
-    schwarzschild: { massLog: 1, a: 0, incl: 75, rCam: 20, fov: 60, rOut: 16, disc: true, prograde: true, hotSpot: false, jets: false, view: 'color' },
-    retro: { massLog: 1, a: 0.9, prograde: false, incl: 70, rCam: 20, fov: 60, rOut: 18, disc: true, hotSpot: false },
-    plunge: { massLog: 1, a: 0.9, incl: 82, rCam: 30, fov: 70, rOut: 16, disc: true, observer: 'freefall', hotSpot: false, phi: 95 },
+    sgra: { massLog: Math.log10(4.297e6), a: 0.9, incl: 30, eht: true, distanceMpc: 0.008277, beamUas: 20, pa: 0, rOut: 12, rCam: 20, hotSpot: false, view: 'color', thickness: 0.3, palette: 'physical' },
+    m87: { massLog: Math.log10(6.5e9), a: 0.9, incl: 17, eht: true, distanceMpc: 16.8, beamUas: 20, pa: 288, rOut: 12, rCam: 20, hotSpot: false, view: 'color', thickness: 0.3, palette: 'physical' },
+    gargantua: { massLog: 8, a: 0.998, incl: 85, rCam: 18, fov: 60, rOut: 20, disc: true, prograde: true, hotSpot: false, jets: false, view: 'color', phi: 95, exposure: 4 },
+    cygx1: { massLog: Math.log10(21), a: 0.95, incl: 62, rCam: 24, fov: 55, rOut: 16, disc: true, distanceMpc: 0.0022, hotSpot: false, exposure: 2.5 },
+    grs1915: { massLog: Math.log10(12), a: 0.98, incl: 66, rCam: 26, fov: 55, rOut: 16, disc: true, jets: true, hotSpot: true, hotR: 6, distanceMpc: 0.0086, exposure: 2.5 },
+    schwarzschild: { massLog: 1, a: 0, incl: 75, rCam: 20, fov: 60, rOut: 16, disc: true, prograde: true, hotSpot: false, jets: false, view: 'color', exposure: 2 },
+    retro: { massLog: 1, a: 0.9, prograde: false, incl: 70, rCam: 20, fov: 60, rOut: 18, disc: true, hotSpot: false, exposure: 2.5 },
+    plunge: { massLog: 1, a: 0.9, incl: 82, rCam: 30, fov: 70, rOut: 16, disc: true, observer: 'freefall', hotSpot: false, phi: 95, exposure: 2.5 },
   };
 
   function applyPreset(id) {
@@ -352,7 +353,8 @@
     params.jets = !!d.jets; params.view = d.view || 'color'; params.background = 'stars';
     params.eht = !!d.eht; params.beamUas = d.beamUas || 20; params.pa = d.pa || 0; params.halfWidthM = 12;
     params.distanceMpc = d.distanceMpc || 0; params.observer = d.observer || 'static';
-    params.launchMode = false; params.exposure = 1;
+    params.launchMode = false; params.exposure = d.exposure || 1; params.discBright = 1;
+    params.palette = d.palette || (d.eht ? 'physical' : 'warm'); params.discThickness = d.thickness || 0;
     cam.r = d.rCam || 20; cam.theta = clamp(d.incl, 0.5, 179.5) * DEG; cam.phi = (d.phi == null ? 95 : d.phi) * DEG;
     cam.fov = (d.fov || 60) * DEG; cam.yaw = 0; cam.pitch = 0;
     simT = 0;
@@ -396,7 +398,8 @@
       try { observ = K.observables({ massMsun: massMsun(), a: params.a, distanceMpc: params.distanceMpc || undefined, prograde: params.prograde }); }
       catch (e) { observ = null; }
     }
-    shaderParams.disc.temperatureK = innerTemperature();
+    params.physT = innerTemperature();
+    shaderParams.disc.temperatureK = params.palette === 'warm' ? 9000 : params.physT;
   }
   function microarcsecPerM() {
     if (!observ || !(params.distanceMpc > 0)) return NaN;
@@ -1003,11 +1006,12 @@
     refs.hotB = ui.slider({ id: 'bh-hotb', label: 'Hot spot brightness', min: 2, max: 20, step: 0.5, value: params.hotBright, format: (v) => v.toFixed(1) + '× disc', onInput: (v) => { params.hotBright = v; touch(); } });
     refs.jets = ui.toggle({ id: 'bh-jets', label: 'Jets along the spin axis', checked: params.jets, onChange: (on) => { params.jets = on; touch(); } });
     refs.view = selectField(ui, 'bh-view', 'View', [['color', 'Colour (physical)'], ['redshift', 'Redshift g on the disc'], ['doppler', 'Doppler: approaching / receding'], ['lensing', 'Lensing chequerboard']], params.view, (v) => { params.view = v; touch(); });
+    refs.palette = selectField(ui, 'bh-palette', 'Disc colours', [['warm', 'Warm film palette (9,000 K ramp, display only)'], ['physical', 'Physical blackbody at the NT temperature']], params.palette, (v) => { params.palette = v; updateDerived(); touch(); updateStats(); });
     refs.bg = selectField(ui, 'bh-bg', 'Background', [['stars', 'Star catalog + Milky Way'], ['grid', 'RA/Dec grid'], ['black', 'Black']], params.background, (v) => { params.background = v; touch(); });
     refs.steps = ui.slider({ id: 'bh-steps', label: 'Quality (integration steps)', min: 60, max: 400, step: 10, value: params.steps, format: (v) => v.toFixed(0) + ' steps', onInput: (v) => { params.steps = v; touch(); } });
     refs.res = selectField(ui, 'bh-res', 'Resolution scale', [['auto', 'Auto (adaptive)'], ['0.25', '0.25×'], ['0.5', '0.5×'], ['0.75', '0.75×'], ['1', '1×']], params.resMode, (v) => { params.resMode = v; if (v !== 'auto') params.resScale = Number(v); touch(); });
     refs.exposure = ui.slider({ id: 'bh-exposure', label: 'Exposure', min: -2, max: 2, step: 0.05, value: Math.log2(params.exposure), format: (v) => Math.pow(2, v).toFixed(2) + '×', onInput: (v) => { params.exposure = Math.pow(2, v); touch(); } });
-    sc.append(refs.mass.el, refs.spin.el, refs.disc.el, refs.prograde.el, refs.incl.el, refs.rcam.el, refs.fov.el, refs.rout.el, refs.mdot.el, refs.hot.el, refs.hotR.el, refs.hotB.el, refs.jets.el, refs.view.el, refs.bg.el, refs.steps.el, refs.res.el, refs.exposure.el);
+    sc.append(refs.mass.el, refs.spin.el, refs.disc.el, refs.prograde.el, refs.incl.el, refs.rcam.el, refs.fov.el, refs.rout.el, refs.mdot.el, refs.hot.el, refs.hotR.el, refs.hotB.el, refs.jets.el, refs.view.el, refs.palette.el, refs.bg.el, refs.steps.el, refs.res.el, refs.exposure.el);
     panel.append(sc);
 
     // EHT mode
@@ -1016,8 +1020,9 @@
     refs.beam = ui.slider({ id: 'bh-beam', label: 'Beam FWHM', min: 0, max: 40, step: 1, value: params.beamUas, format: (v) => v.toFixed(0) + ' μas', onInput: (v) => { params.beamUas = v; touch(); } });
     refs.pa = ui.slider({ id: 'bh-pa', label: 'Position angle', min: 0, max: 360, step: 1, value: params.pa, format: (v) => v.toFixed(0) + '°', onInput: (v) => { params.pa = v; touch(); } });
     refs.halfw = ui.slider({ id: 'bh-halfw', label: 'Image half-width', min: 4, max: 40, step: 0.5, value: params.halfWidthM, format: (v) => v.toFixed(1) + ' M', onInput: (v) => { params.halfWidthM = v; touch(); } });
+    refs.thick = ui.slider({ id: 'bh-thick', label: 'Emitter thickness (slab, 0 = thin disc)', min: 0, max: 2, step: 0.1, value: params.discThickness, format: (v) => v.toFixed(1) + ' M', onInput: (v) => { params.discThickness = v; touch(); } });
     refs.ehtStats = ui.stats([{ id: 'ringModel', label: 'Ring diameter (this model)' }, { id: 'ringPub', label: 'Ring diameter (published)' }, { id: 'shadowPred', label: 'Shadow diameter (theory)' }]);
-    se.append(refs.eht.el, refs.beam.el, refs.pa.el, refs.halfw.el, refs.ehtStats.el);
+    se.append(refs.eht.el, refs.beam.el, refs.pa.el, refs.halfw.el, refs.thick.el, refs.ehtStats.el);
     panel.append(se);
 
     // Observer
@@ -1072,7 +1077,7 @@
       ui.el('p', 'note', 'Coordinates. Everything is computed in Kerr–Schild Cartesian coordinates (t, x, y, z), where the metric is flat space plus f k_μ k_ν. Unlike Boyer–Lindquist, nothing blows up at the horizon, so a ray or a falling camera passes r₊ without any coordinate trick — that is why the sky does not vanish when you dive through.'),
       ui.el('p', 'note', 'What is integrated. Hamilton\'s equations for H = ½ g^{μν} p_μ p_ν with analytic derivatives of the inverse metric, fourth-order Runge–Kutta in the affine parameter, step ∝ (r − r₊) with a floor near the horizon. Per pixel on the GPU (60–400 steps), the same equations on the CPU for the particles: E, L and Carter\'s Q are monitored, their drift is shown.'),
       ui.el('p', 'note', 'Disc. A geometrically thin, optically thick Novikov–Thorne disc from the ISCO outward: T(r) ∝ [Ṁ/r³ · (1 − √(r_isco/r))]^{1/4} (zero torque at the inner edge), Keplerian four-velocity, observed intensity g⁴ × emitted (bolometric), colour = blackbody at g·T. The near side of the disc appears above the hole because rays from its far side are bent over the top.'),
-      ui.el('p', 'note', 'What is approximate. No radiative transfer or polarisation, the disc is a surface with a sheared filament texture, the hot spot is a Gaussian blob, jets are a toy emissivity along ±z, the particle trails and the light curve use flat projections and no light bending, and the Kerr–Schild φ differs from Boyer–Lindquist φ by a radius-dependent shift.'),
+      ui.el('p', 'note', 'What is approximate. No radiative transfer or polarisation, the disc is a surface with a sheared filament texture (the default "warm" palette paints it with a 9,000 K colour ramp for the film look — the readout keeps the real NT temperature, which is 1e5–1e7 K and would render blue-white), the hot spot is a Gaussian blob, jets are a toy emissivity along ±z, the particle trails and the light curve use flat projections and no light bending, and the Kerr–Schild φ differs from Boyer–Lindquist φ by a radius-dependent shift.'),
       ui.el('p', 'note', 'EHT comparison. Far mode places the image plane at infinity (impact parameters α, β in M), blurs with a Gaussian beam (20 μas FWHM by default) and maps total intensity onto the radio colour ramp. The bright ring is the lensed photon ring plus direct emission from the inner disc; it is brighter on the side turning towards you because Doppler beaming boosts the approaching gas by g⁴. Published: M87* 42 ± 3 μas (2019), Sgr A* 51.8 ± 2.3 μas (2022).'),
     );
     panel.append(sh);
@@ -1094,7 +1099,7 @@
     r.incl.value = cam.theta / DEG; r.rcam.value = cam.r; r.fov.value = cam.fov / DEG; r.rout.value = params.rOut; r.mdot.value = Math.log10(params.mdot);
     r.hot.input.checked = params.hotSpot; r.hotR.value = params.hotR; r.hotB.value = params.hotBright; r.jets.input.checked = params.jets;
     r.view.input.value = params.view; r.bg.input.value = params.background; r.steps.value = params.steps; r.res.input.value = params.resMode; r.exposure.value = Math.log2(params.exposure);
-    r.eht.input.checked = params.eht; r.beam.value = params.beamUas; r.pa.value = params.pa; r.halfw.value = params.halfWidthM;
+    r.eht.input.checked = params.eht; r.beam.value = params.beamUas; r.pa.value = params.pa; r.halfw.value = params.halfWidthM; r.thick.value = params.discThickness; r.palette.input.value = params.palette;
     r.obsMode.set(params.observer); r.launch.input.checked = params.launchMode;
     const far = params.eht;
     r.pa.el.hidden = !far; r.halfw.el.hidden = !far; r.beam.el.hidden = !far; r.ehtStats.el.hidden = !far;
@@ -1135,7 +1140,7 @@
     set('dil', obs.dilation.toFixed(4), params.observer === 'static' && !obs.insideErgo ? '√(−g_tt): 1 s here = ' + (1 / Math.max(1e-9, obs.dilation)).toFixed(3) + ' s far away' : 'dτ/dt = 1/e₀ᵗ of the camera frame');
     const rE = Number.isFinite(o.rErgoEqKm) ? o.rErgoEqKm : 2 * Mkm;
     set('ergo', '2.000 M', fmtKm(rE));
-    set('tdisc', fmtSci(shaderParams.disc.temperatureK, 'K', 0), 'at the inner edge, Novikov–Thorne');
+    set('tdisc', fmtSci(params.physT, 'K', 0), params.palette === 'warm' ? 'Novikov–Thorne; drawn with the warm 9,000 K palette' : 'at the inner edge, Novikov–Thorne');
     // EHT tiles
     const pub = RING_PUBLISHED[preset];
     r.ehtStats.set('ringPub', pub ? `${pub.uas} ± ${pub.err} μas` : '—', pub ? pub.label : 'no published ring for this object');
@@ -1350,7 +1355,7 @@
     sp.fovDeg = cam.fov / DEG; sp.halfWidthM = params.halfWidthM; sp.inclinationDeg = cam.theta / DEG; sp.positionAngleDeg = params.pa;
     sp.steps = params.steps | 0; sp.stepScale = params.stepScale;
     const d = sp.disc;
-    d.on = params.disc; d.prograde = params.prograde; d.rIn = params.rIn; d.rOut = params.rOut; d.brightness = params.discBright; d.mdot = params.mdot;
+    d.on = params.disc; d.prograde = params.prograde; d.rIn = params.rIn; d.rOut = params.rOut; d.brightness = params.discBright; d.mdot = params.mdot; d.thickness = params.discThickness;
     d.hotSpot.on = params.hotSpot; d.hotSpot.r = Math.max(params.hotR, params.rIn); d.hotSpot.phaseRad = 0; d.hotSpot.sizeM = 0.6 + 0.05 * params.hotR; d.hotSpot.brightness = params.hotBright;
     sp.jets.on = params.jets;
     sp.view = params.view;
