@@ -411,6 +411,7 @@
 
   function rebuild() {
     build(sim);
+    U_MERGE = model.ns ? 0.97 : 0.86;
     sim.baseRate = Math.max(1, (model.tEnd - model.tStart) / 60);
     sim.ended = false;
     setTime(clamp(sim.t, model.tStart, model.tEnd));
@@ -427,7 +428,7 @@
 
   // ---------------------------------------------------------------- time ↔ display coordinate u ∈ [0, 1]
   // Short signals (inspiral ≤ 4 s): linear. Long: log-compressed distance to merger, so the chirp is visible.
-  const U_MERGE = 0.86;
+  let U_MERGE = 0.86;                              // fraction of the plot before the merger (0.97 for NS: no ringdown)
   function isLong() { return -model.tStart > 4; }
   function tcOf() { return 10 / model.fMerge; }
   function uOfT(t) {
@@ -436,6 +437,24 @@
     if (!isLong()) return U_MERGE * (t - tS) / (0 - tS);
     const Tc = tcOf();
     return U_MERGE * (1 - Math.log(1 + (0 - t) / Tc) / Math.log(1 + (0 - tS) / Tc));
+  }
+  // Short signals: a scrolling window of the last Wd seconds before the merger, linear in t, with the
+  // post-merger part filling the last 14% of the plot (so the ringdown is never squeezed).
+  const win = { tA: 0, k: 0 };
+  function shortWindow(pw) {
+    const Wd = Math.min(-model.tStart, 2);
+    win.tA = clamp(sim.t - 0.8 * Wd, model.tStart, -Wd);
+    win.k = U_MERGE * pw / Wd;
+    return win;
+  }
+  function xOfTShort(t, x0, pw) {
+    if (t <= 0) return x0 + (t - win.tA) * win.k;
+    return x0 + (0 - win.tA) * win.k + (model.tEnd > 0 ? t / model.tEnd : 1) * (1 - U_MERGE) * pw;
+  }
+  function tOfXShort(x, x0, pw) {
+    const xm = x0 + (0 - win.tA) * win.k;
+    if (x <= xm) return win.tA + (x - x0) / win.k;
+    return model.tEnd * clamp((x - xm) / ((1 - U_MERGE) * pw), 0, 1);
   }
   function tOfU(u) {
     const tS = model.tStart, tE = model.tEnd;
@@ -473,7 +492,7 @@
   // ---------------------------------------------------------------- layout
   function layout() {
     portrait = H > W * 1.05 || W < 640;
-    const bottomPad = portrait ? 70 : 56;           // room for the shell's HUD / hint line
+    const bottomPad = portrait ? 98 : 86;           // room for the shell's HUD / hint line
     topH = Math.round(portrait ? H * 0.46 : H * 0.5);
     plot = { x0: portrait ? 44 : 60, y0: topH + 22, x1: W - (portrait ? 40 : 54), y1: H - bottomPad };
   }
@@ -521,14 +540,14 @@
       ctx.font = `11px ${FONT_MONO}`; ctx.fillStyle = DIM; ctx.textBaseline = 'top';
       const R1 = (m.ns ? R_NS_KM : 3 * m.m1 * RSUN_KM) * S, R2 = (m.ns ? R_NS_KM : 3 * m.m2 * RSUN_KM) * S;
       ctx.textAlign = 'center';
-      ctx.fillText(`${fmtMass(m.m1)}`, x1, y1 + R1 + 6);
-      ctx.fillText(`${fmtMass(m.m2)}`, x2, y2 + R2 + 6);
+      ctx.fillText(`${fmtMass(m.m1)}${R1 < 2.5 ? ' (dot, not to scale)' : ''}`, x1, y1 + Math.max(R1, 6) + 6);
+      ctx.fillText(`${fmtMass(m.m2)}${R2 < 2.5 ? ' (dot, not to scale)' : ''}`, x2, y2 + Math.max(R2, 6) + 6);
     } else if (!m.ns) {
       // Remnant: a single hole ringing down with an l = m = 2 distortion decaying on τ.
-      const wob = 0.12 * Math.exp(-t / m.tau) * (reducedMotion ? 0 : 1);
+      const wob = 0.06 * Math.exp(-t / m.tau) * (reducedMotion ? 0 : 1);
       drawHole(cx, cy, m.Mf, m.af, S, wob, cur.phi);
       ctx.font = `11px ${FONT_MONO}`; ctx.fillStyle = DIM; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText(`${fmtMass(m.Mf)} · a = ${m.af.toFixed(2)}`, cx, cy + 3 * m.Mf * RSUN_KM * S + 6);
+      ctx.fillText(`${fmtMass(m.Mf)} · a = ${m.af.toFixed(2)}`, cx, cy + 3 * m.Mf * RSUN_KM * S * 1.35 + 6);
     } else {
       // NS contact: a merged blob (post-merger not modelled).
       drawStar(cx, cy, R_NS_KM * 1.3 * S, m.M);
@@ -590,6 +609,14 @@
   // A black hole: lensing halo, thin photon ring at 3M, black disc = horizon r₊; optional l=2 wobble.
   function drawHole(x, y, mass, chi, S, wob, phase) {
     const M = mass * RSUN_KM * S;
+    if (3 * M < 2.5) {
+      // Too small to draw to scale (an EMRI companion): a marked dot, not to scale.
+      const g0 = ctx.createRadialGradient(x, y, 0, x, y, 9);
+      g0.addColorStop(0, 'rgba(242,192,99,0.6)'); g0.addColorStop(1, 'rgba(242,192,99,0)');
+      ctx.fillStyle = g0; ctx.beginPath(); ctx.arc(x, y, 9, 0, TWO_PI); ctx.fill();
+      ctx.fillStyle = BRASS; ctx.beginPath(); ctx.arc(x, y, 2.5, 0, TWO_PI); ctx.fill();
+      return;
+    }
     const rPlus = (1 + Math.sqrt(Math.max(1 - chi * chi, 0))) * M;
     const rPh = 3 * M;
     // Halo: lensed light piling up just outside the photon ring.
@@ -600,22 +627,24 @@
     g.addColorStop(1, 'rgba(127,183,232,0)');
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(x, y, rPh * 2.6, 0, TWO_PI); ctx.fill();
-    // Photon ring.
+    // Photon ring and the shadow it rims (both carry the l = 2 wobble during the ringdown).
+    const ringPath = (scale) => {
+      ctx.beginPath();
+      if (wob > 0) {
+        const n = 64;
+        for (let k = 0; k <= n; k++) {
+          const th = k / n * TWO_PI;
+          const rr = rPh * scale * (1 + wob * Math.cos(2 * th - phase));
+          const px = x + Math.cos(th) * rr, py = y + Math.sin(th) * rr;
+          if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+      } else ctx.arc(x, y, rPh * scale, 0, TWO_PI);
+    };
     ctx.strokeStyle = 'rgba(255,248,230,0.95)'; ctx.lineWidth = Math.max(0.8, Math.min(1.6, rPh * 0.05));
-    ctx.beginPath(); ctx.arc(x, y, rPh, 0, TWO_PI); ctx.stroke();
-    // Shadow (horizon disc, slightly larger so the ring reads as a rim).
+    ringPath(1); ctx.stroke();
     ctx.fillStyle = '#000';
-    ctx.beginPath();
-    if (wob > 0) {
-      const n = 48;
-      for (let k = 0; k <= n; k++) {
-        const th = k / n * TWO_PI;
-        const rr = rPh * 0.98 * (1 + wob * Math.cos(2 * th - phase));
-        const px = x + Math.cos(th) * rr, py = y + Math.sin(th) * rr;
-        if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-      }
-    } else ctx.arc(x, y, rPh * 0.98, 0, TWO_PI);
-    ctx.fill();
+    ringPath(0.98); ctx.fill();
     // Horizon hint: a faint circle at r₊ inside the shadow.
     ctx.strokeStyle = 'rgba(38,49,79,0.9)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(x, y, rPlus, 0, TWO_PI); ctx.stroke();
@@ -636,19 +665,11 @@
     if (pw < 40 || ph < 40) return;
     const long = isLong();
     // View window: long → whole signal in u; short → scrolling window of the last Wd seconds.
-    let uA = 0, uB = 1, tA, tB;
-    if (!long) {
-      const Wd = Math.min(-m.tStart, 2);
-      const tot = m.tEnd - m.tStart;
-      if (tot <= Wd * 1.25) { tA = m.tStart; tB = m.tEnd; }
-      else {
-        tA = sim.t - 0.8 * Wd; tB = sim.t + 0.2 * Wd;
-        if (tA < m.tStart) { tA = m.tStart; tB = tA + Wd; }
-        if (tB > m.tEnd) { tB = m.tEnd; tA = tB - Wd; }
-      }
-    }
-    const tOfX = long ? (x) => tOfU(uA + (uB - uA) * (x - x0) / pw) : (x) => tA + (tB - tA) * (x - x0) / pw;
-    const xOfT = long ? (t) => x0 + (uOfT(t) - uA) / (uB - uA) * pw : (t) => x0 + (t - tA) / (tB - tA) * pw;
+    const uA = 0, uB = 1;
+    let tA = 0, tB = 0;
+    if (!long) { shortWindow(pw); tA = win.tA; tB = tOfXShort(x1, x0, pw); }
+    const tOfX = long ? (x) => tOfU(uA + (uB - uA) * (x - x0) / pw) : (x) => tOfXShort(x, x0, pw);
+    const xOfT = long ? (t) => x0 + (uOfT(t) - uA) / (uB - uA) * pw : (t) => xOfTShort(t, x0, pw);
     const ymid = (y0 + y1) * 0.5, amp = ph * 0.42 / (m.Apeak || 1e-30);
     const yOfH = (h) => ymid - h * amp;
     // f axis (log) on the right.
@@ -674,8 +695,9 @@
       ctx.setLineDash([3, 4]); ctx.strokeStyle = col; ctx.globalAlpha = 0.7;
       ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, y0); ctx.lineTo(Math.round(x) + 0.5, y1); ctx.stroke();
       ctx.setLineDash([]); ctx.globalAlpha = 1;
-      ctx.fillStyle = col; ctx.textAlign = label === 'ISCO' ? 'right' : 'left';
-      ctx.fillText(label, x + (label === 'ISCO' ? -4 : 4), y0 + 4);
+      const right = label === 'ISCO' || x + 60 > x1;
+      ctx.fillStyle = col; ctx.textAlign = right ? 'right' : 'left';
+      ctx.fillText(label, x + (right ? -4 : 4), y0 + 4);
     }
     if (!m.ns) {
       const xr = xOfT(m.tau * 2);
@@ -707,8 +729,8 @@
         if (h < hmin) hmin = h; if (h > hmax) hmax = h;
         if (s === (ns >> 1)) hm = h;
       }
-      if (dphi > 2.5) { const Amid = stateAt(m, 0.5 * (ta + tb), tmpState).A; hmin = -Amid; hmax = Amid; }
-      upper[k] = yOfH(hmax); lower[k] = yOfH(hmin); mids[k] = ns === 1 ? yOfH(hm) : (dphi > 2.5 ? NaN : yOfH(hm));
+      if (dphi > 1.5) { const Amid = stateAt(m, 0.5 * (ta + tb), tmpState).A; hmin = -Amid; hmax = Amid; }
+      upper[k] = yOfH(hmax); lower[k] = yOfH(hmin); mids[k] = ns === 1 ? yOfH(hm) : (dphi > 1.5 ? NaN : yOfH(hm));
     }
     // Fill.
     ctx.beginPath(); let open = false;
@@ -767,18 +789,19 @@
     ctx.save(); ctx.translate(portrait ? 12 : 16, ymid); ctx.rotate(-PI / 2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = ICE; ctx.fillText(`h₊ ×10${sup(e)}`, 0, 0); ctx.restore();
     ctx.textAlign = 'left'; ctx.fillStyle = BRASS;
-    const fTicks = fLo < 1 ? [1e-4, 1e-3, 1e-2, 1e-1, 1, 10] : [10, 30, 100, 300, 1000, 3000];
-    for (const f of fTicks) { if (f < fLo || f > fHi) continue; const y = yOfF(f); ctx.fillText(fmtHz(f).replace(' ', ''), x1 + 6, y); ctx.fillStyle = BRASS; }
+    for (let e2 = Math.floor(log10(fLo)); e2 <= Math.ceil(log10(fHi)); e2++) {
+      for (const mant of [1, 3]) { const f = mant * Math.pow(10, e2); if (f < fLo || f > fHi) continue; ctx.fillText(fmtHz(f).replace(' ', ''), x1 + 6, yOfF(f)); }
+    }
     ctx.save(); ctx.translate(W - (portrait ? 8 : 12), ymid); ctx.rotate(PI / 2); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('f (GW)', 0, 0); ctx.restore();
     // Time axis text.
     ctx.fillStyle = DIM; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
-    ctx.fillText(long ? 'whole inspiral · time to merger log-compressed' : `time (s) · window ${fmtTime(tB - tA)}`, x0, y1 + 4);
+    ctx.fillText(long ? (portrait ? 'log time to merger' : 'whole inspiral · time to merger log-compressed') : (portrait ? 'time' : `time · last ${fmtTime(-tA)} before the merger`), x0, y1 + 4);
     ctx.textAlign = 'right';
     if (long) ctx.fillText(`${fmtTime(-m.tStart)} → merger → ${fmtTime(m.tEnd)}`, x1, y1 + 4);
     else {
-      const fmt = (t) => `${t < 0 ? '−' : '+'}${Math.abs(t).toFixed(2)} s`;
-      ctx.fillText(`${fmt(tA)} … ${fmt(tB)}`, x1, y1 + 4);
+      const fmt = (t) => `${t < 0 ? '−' : '+'}${Math.abs(t) < 0.1 ? (Math.abs(t) * 1e3).toFixed(0) + ' ms' : Math.abs(t).toFixed(2) + ' s'}`;
+      ctx.fillText(`${fmt(tA)} … ${fmt(Math.min(tB, m.tEnd))}`, x1, y1 + 4);
     }
     // Title.
     ctx.font = `500 10px ${FONT_BODY}`; ctx.fillStyle = DIM; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
@@ -861,14 +884,7 @@
     const { x0, x1 } = plot;
     const m = model;
     if (isLong()) setTime(tOfU((x - x0) / (x1 - x0)));
-    else {
-      // Same window logic as the plot (recomputed here so a drag lands where the finger is).
-      const Wd = Math.min(-m.tStart, 2), tot = m.tEnd - m.tStart;
-      let tA, tB;
-      if (tot <= Wd * 1.25) { tA = m.tStart; tB = m.tEnd; }
-      else { tA = sim.t - 0.8 * Wd; tB = sim.t + 0.2 * Wd; if (tA < m.tStart) { tA = m.tStart; tB = tA + Wd; } if (tB > m.tEnd) { tB = m.tEnd; tA = tB - Wd; } }
-      setTime(tA + (tB - tA) * clamp((x - x0) / (x1 - x0), 0, 1));
-    }
+    else { shortWindow(x1 - x0); setTime(clamp(tOfXShort(clamp(x, x0, x1), x0, x1 - x0), m.tStart, m.tEnd)); }
     sim.ended = sim.t >= model.tEnd;
     if (sliders.time) sliders.time.value = uOfT(sim.t);
     refreshStats(true);
@@ -913,9 +929,9 @@
     panel.append(sPre);
 
     const sCtl = ui.section('Controls');
-    sliders.m1 = ui.slider({ id: 'mg-m1', label: 'Mass 1', min: 0, max: 7, step: 0.01, value: log10(sim.m1), format: (v) => fmtMass(Math.pow(10, v)), onInput: (v) => { sim.m1 = Math.pow(10, v); onParam(); } });
-    sliders.m2 = ui.slider({ id: 'mg-m2', label: 'Mass 2', min: 0, max: 7, step: 0.01, value: log10(sim.m2), format: (v) => fmtMass(Math.pow(10, v)), onInput: (v) => { sim.m2 = Math.pow(10, v); onParam(); } });
-    sliders.D = ui.slider({ id: 'mg-d', label: 'Distance', min: 0, max: 4.3, step: 0.01, value: log10(sim.D), format: (v) => fmtDist(Math.pow(10, v)), onInput: (v) => { sim.D = Math.pow(10, v); onParam(); } });
+    sliders.m1 = ui.slider({ id: 'mg-m1', label: 'Mass 1', min: 0, max: 7, step: null, value: log10(sim.m1), format: (v) => fmtMass(Math.pow(10, v)), onInput: (v) => { sim.m1 = Math.pow(10, v); onParam(); } });
+    sliders.m2 = ui.slider({ id: 'mg-m2', label: 'Mass 2', min: 0, max: 7, step: null, value: log10(sim.m2), format: (v) => fmtMass(Math.pow(10, v)), onInput: (v) => { sim.m2 = Math.pow(10, v); onParam(); } });
+    sliders.D = ui.slider({ id: 'mg-d', label: 'Distance', min: 0, max: 4.3, step: null, value: log10(sim.D), format: (v) => fmtDist(Math.pow(10, v)), onInput: (v) => { sim.D = Math.pow(10, v); onParam(); } });
     sliders.chi1 = ui.slider({ id: 'mg-chi1', label: 'Spin χ₁ (aligned)', min: -0.99, max: 0.99, step: 0.01, value: sim.chi1, format: (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2), onInput: (v) => { sim.chi1 = v; onParam(); } });
     sliders.chi2 = ui.slider({ id: 'mg-chi2', label: 'Spin χ₂ (aligned)', min: -0.99, max: 0.99, step: 0.01, value: sim.chi2, format: (v) => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2), onInput: (v) => { sim.chi2 = v; onParam(); } });
     sliders.ns = ui.toggle({ id: 'mg-ns', label: 'Neutron stars (cut at contact, no ringdown)', checked: false, onChange: (on) => { sim.ns = on; onParam(); } });
