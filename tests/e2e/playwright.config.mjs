@@ -21,7 +21,9 @@ function preinstalledChromium() {
   return undefined;
 }
 const executablePath = preinstalledChromium();
-const launchOptions = executablePath ? { executablePath } : {};
+// SwiftShader gives headless Chromium a software WebGL so the ray tracer renders in CI.
+const args = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
+const launchOptions = executablePath ? { executablePath, args } : { args };
 
 export default defineConfig({
   testDir: here,
