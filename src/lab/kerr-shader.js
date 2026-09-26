@@ -43,18 +43,45 @@
 //   n̂ = (sin i, 0, cos i); the image plane basis before the position angle is α̂ = (0,1,0) and
 //   β̂ = (−cos i, 0, sin i) (projected spin axis), rotated by PA east of north (counter-clockwise on
 //   screen, RA increasing to the left). A pixel with impact parameters (α, β) [in M] starts at
-//   X = R0 n̂ + α α̂ + β β̂ (R0 = 400) with covariant momentum p_t = +1 (E = −1, past-directed) and
+//   X = R0 n̂ + α α̂ + β β̂ (R0 = 400; in the tracer chart the three vectors are y-mirrored, χ(400)
+//   is negligible) with covariant momentum p_t = −1 (E = +1: future-directed in the Φ-image) and
 //   p_i = −n̂_i + δ r̂_i, where the radial correction δ is the small root of H = 0. Adding a
-//   component along r̂ = X/|X| leaves L = (X × p⃗)_z = α sin i untouched, so ξ = L/E = −α sin i and
+//   component along r̂ = X/|X| leaves L = (X × p⃗)_z untouched, so ξ = L/E = −α sin i and
 //   E = 1 hold EXACTLY (the CB constants); Q = β² + (α² − a²) cos² i holds to O(M/R0) ≈ 0.25 %.
 //
 // Integrator: classical RK4 in λ on the 6-vector (x⃗, p⃗) (p_t is constant, t is not needed).
-//   Step h = stepScale · max(0.02, min(0.5 (r − r_+), 0.03 r + 0.06 r · smoothstep(3, 30, r))):
+//   Step h = stepScale · max(h_floor, min(0.5 (r − r_+), 0.03 r + 0.06 r · smoothstep(3, 30, r))):
 //   ~9 % of r far out (straight rays), ~3 % of r near the hole (≈120 RK4 steps per photon-orbit
-//   revolution at r = 3), shrinking ∝ (r − r_+) at the horizon with a floor of 0.02. Capture when
-//   r < r_+ (1 + 1e−3); escape when r > 400 and moving outward (x⃗·dx⃗/dλ > 0). Rays that exhaust
-//   `steps` show the sky in their current direction when r > 10, else black.
-//
+//   revolution at r = 3), shrinking ∝ (r − r_+) at the horizon with h_floor = 0.02. Capture when
+//   r < r_+ (1 + 1e−3) (see the chart note below); escape when r > 400 and moving outward
+//   (x⃗·dx⃗/dλ > 0). Rays that exhaust `steps` show the sky in their current direction when
+//   r > 10, else black.
+// Which chart the tracer integrates in — and why it is not the ingoing one: the rays traced here
+//   are the OUTGOING family (they reach the observer). In the ingoing Kerr–Schild chart that family
+//   is regular at the future horizon but singular at the past one: traced into the past it
+//   asymptotes to r = r_+ with t → −∞ and p_i ∝ 1/Δ (dt/dλ = −p_t + f K blows up) — at a = 0.998
+//   |p| is already ≈ 700 at the prograde photon orbit, where the D-shape is decided (verified: RK4
+//   loses H at r ≈ 2 for a = 0). The OUTGOING chart has no such pole for these rays, and it needs
+//   no new metric code: time reversal plus a mirror, Φ: (t, x, y, z) → (−t, x, −y, z), pulls the
+//   ingoing metric back to the outgoing one for the SAME spin (Φ* g_in(a) = g_out(a); checked
+//   numerically to 1e-8 against the closed form k_out = (1, −(rx − ay)/S, −(ry + ax)/S, −z/r)).
+//   So the pipeline is: (1) convert the camera from ingoing to outgoing coordinates,
+//       ψ_out = ψ_in − χ(r),  χ(r) = 2 atan(a/r) + (2a/(r_+ − r_−)) ln((r − r_+)/(r − r_−)),
+//       t_out = t_in − 4∫ r/Δ dr  (only dt_out/dr = −4r/Δ and χ'(r) = 4ar/(SΔ) enter the Jacobian
+//       for the basis 4-vectors; χ → 0 as O(1/r²), so the sky is unrotated to 1e-5 rad at r = 400);
+//   (2) apply Φ to the position and the basis vectors (v → (−v^t, v^x, −v^y, v^z)); (3) build
+//   p = d − e0 and integrate with the ingoing formulas above — in the Φ-image the ray is
+//   FUTURE-directed and ingoing, regular through r_+, captured at r < r_+ (1 + 1e−3) as the spec
+//   says; (4) map results back with Φ⁻¹ = Φ then ψ_in = ψ_out + χ(r). Only azimuths need care:
+//   a point at tracer azimuth ψ_m has ingoing azimuth ψ_in = −ψ_m + χ(r), and the disc texture /
+//   hot spot use the same φ label as SW.Kerr (φ = ψ_in − atan2(a, r)); the exact BL azimuth is
+//   ψ_in − χ(r)/2, i.e. the label is off by the log term of χ/2 — a fixed offset along each orbit.
+//   The emitter's u^μ = u^t (1, −Ω y, Ω x, 0), Ω, u^t, ξ = L/E and g are all Φ-invariant (Φ flips
+//   the signs of L and E together and preserves the rotation sense: mirror × time reversal), so
+//   the disc physics below is written once. SW.KerrGL.cpu.toTracer / fromTracer expose the maps;
+//   cpu.trace returns hit points and sky directions already converted back to ingoing KS.
+//   kerr.js: SW.Kerr.integrate on a past-directed ingoing state has the pole; use cpu.trace for
+//   tap → disc mapping, or stop it at r_+ + ½(r_ph,pro − r_+) (below r_ph,pro nothing escapes).
 // Disc (thin, z = 0, r_in ≤ r ≤ r_out): the z sign change between two RK4 states is interpolated
 //   linearly in λ; on the plane r² = x² + y² − a². Emitter: circular Keplerian orbit,
 //   Ω = ±1/(r^{3/2} ± a) (upper: prograde), u^μ = u^t (1, −Ω y, Ω x, 0) — in KS Cartesian the
@@ -65,7 +92,8 @@
 //   T(r) = T_in (r_in/r)^{3/4} (1 − √(r_isco/r))^{1/4}, I_emit ∝ T⁴, observed I = g⁴ I_emit
 //   (BOLOMETRIC — the whole spectrum lands in the pixel), colour = blackbody(g·T) from a 9-stop
 //   linear-sRGB ramp, times a Keplerian-sheared filament texture (value noise in (φ − Ω(r) t, ln r))
-//   and the hot-spot Gaussian at (r_s, φ_s = phase + Ω(r_s) t). The thin disc is opaque (the ray
+//   and the hot-spot Gaussian at (r_s, φ_s = phase + Ω(r_s) t); the last 12 % of r_out is tapered
+//   (cosmetic, so the outer edge does not cut the image). The thin disc is opaque (the ray
 //   stops); with `thickness` > 0 it becomes an emitting/absorbing slab |z| < thickness sampled once
 //   per RK4 step (source function = the same NT intensity, κ = 1.5/thickness).
 //   Jets: pure volumetric emissivity in cones about ±z (no bulk velocity, no beaming), pale blue.
@@ -98,6 +126,17 @@
     return prograde !== false ? 3 + z2 - s : 3 + z2 + s;
   }
   function rPlus(a) { return 1 + Math.sqrt(Math.max(0, 1 - a * a)); }
+  // Prograde circular photon orbit radius, 2 (1 + cos(⅔ acos(−a))).
+  function photonOrbit(a) { return 2 * (1 + Math.cos((2 / 3) * Math.acos(-a))); }
+  function rMinus(a) { return 1 - Math.sqrt(Math.max(0, 1 - a * a)); }
+  // Capture radius of the tracer, r_+ (1 + 1e-3) (the tracer chart is regular there — see header).
+  function captureRadius(a) { return rPlus(a) * 1.001; }
+  // Azimuth offset between the ingoing and outgoing KS charts: ψ_out = ψ_in − χ(r) (header).
+  function chi(a, r) {
+    const rp = rPlus(a), rm = rMinus(a), d = rp - rm;
+    const lg = d > 1e-6 ? (a / d) * Math.log(Math.max(r - rp, 1e-12) / (r - rm)) : -a / Math.max(r - 1, 1e-12);
+    return 2 * Math.atan2(a, r) + 2 * lg;
+  }
   // Affine-parameter step for BL radius r (the same rule as the GLSL stepOf()).
   function stepOf(r, a, stepScale) {
     const t = Math.min(1, Math.max(0, (r - 3) / 27));
@@ -137,12 +176,12 @@
   const FRAG_BODY = `
 #define MAX_STEPS ${MAX_STEPS}
 #define R_ESCAPE ${R_ESCAPE.toFixed(1)}
-#define STEP_FLOOR ${STEP_FLOOR}
+#define STEP_FLOOR 0.02
 #define PI 3.14159265358979
 #define TWO_PI 6.28318530717959
 
 uniform float uA;          // spin
-uniform float uRcap;       // r_+ (1 + 1e-3)
+uniform vec3  uHor;        // r_+, r_-, r_cap = r_+ (1 + 1e-3)
 uniform int   uSteps;      // ≤ MAX_STEPS
 uniform float uStepScale;
 uniform vec2  uRes;        // canvas pixels
@@ -193,8 +232,8 @@ void deriv(in vec3 x, in vec4 p, out vec3 dx, out vec3 dp, out float rOut) {
   vec3 ps = p.yzw;
   float K = -p.x + dot(k, ps);
   dx = ps - f * K * k;
-  float common = (x.x * ps.x + x.y * ps.y) * invS - 2.0 * r * invS * (k.x * ps.x + k.y * ps.y) - x.z * ps.z / r2;
-  vec3 c = common * dr;
+  float cr = (x.x * ps.x + x.y * ps.y) * invS - 2.0 * r * invS * (k.x * ps.x + k.y * ps.y) - x.z * ps.z / r2;
+  vec3 c = cr * dr;
   c.x += (r * ps.x - a * ps.y) * invS;
   c.y += (a * ps.x + r * ps.y) * invS;
   c.z += ps.z / r;
@@ -218,8 +257,14 @@ vec4 lower(vec3 x, vec4 pUp) {
 float stepOf(float r) {
   float sm = smoothstep(3.0, 30.0, r);
   float base = 0.03 * r + 0.06 * r * sm;
-  float rp = uRcap / 1.001;
-  return uStepScale * max(STEP_FLOOR, min(0.5 * (r - rp), base));
+  return uStepScale * max(STEP_FLOOR, min(0.5 * (r - uHor.x), base));
+}
+
+// ingoing/outgoing azimuth offset χ(r) (header); disc BL azimuth = −ψ_tracer + χ/2
+float chiOf(float r) {
+  float d = uHor.x - uHor.y;
+  float lg = d > 1e-6 ? (uA / d) * log(max(r - uHor.x, 1e-12) / (r - uHor.y)) : -uA / max(r - 1.0, 1e-12);
+  return 2.0 * atan(uA, r) + 2.0 * lg;
 }
 
 // ---- noise / textures ---------------------------------------------------------------------
@@ -308,14 +353,15 @@ vec3 skyColor(vec3 d) {
     float dist = length(cf - sp) * cs;                       // degrees
     float mag = h * h * h;                                   // few bright, many faint
     float sz = mix(0.10, 0.45, mag);
-    float br = mix(0.08, 3.0, mag * mag) * (layer == 0 ? 1.0 : 0.6);
+    float br = mix(0.05, 2.5, mag * mag) * (layer == 0 ? 1.0 : 0.5);
     float bv = hash21(ci + 11.3);
     vec3 tint = mix(vec3(0.75, 0.85, 1.0), vec3(1.0, 0.85, 0.65), bv);
     col += br * tint * exp(-dist * dist / (2.0 * sz * sz));
   }
   // faint band ("milky way") along a tilted great circle
   float band = exp(-pow(d.z * 0.8 + d.y * 0.6, 2.0) * 18.0);
-  col += band * vec3(0.05, 0.05, 0.07) * (0.6 + 0.4 * hash31(floor(d * 40.0)));
+  float mottle = 0.75 + 0.25 * sin(7.0 * d.x + 3.0 * sin(5.0 * d.y)) * cos(6.0 * d.z + 2.0 * sin(4.0 * d.x));
+  col += band * vec3(0.025, 0.025, 0.04) * mottle;
   return col;
 }
 
@@ -340,8 +386,9 @@ vec3 discEmission(float r, vec2 xy, vec4 p, out float gOut, out float dopOut) {
   float prof = pow(uDisc.x / r, 3.0) * max(1.0 - sqrt(uDisc.z / r), 0.0);   // (T/Tin)^4
   float T = Tin * pow(prof, 0.25);
   float I = uDisc.w * prof * uDisc2.y;                                       // bolometric, peak 1
+  I *= smoothstep(uDisc.y, 0.88 * uDisc.y, r);                                // cosmetic outer-edge taper
   // Keplerian-sheared filaments: value noise in (φ − Ω t, ln r), φ = BL azimuth
-  float phi = atan(xy.y, xy.x) - atan(a, r);
+  float phi = -atan(xy.y, xy.x) + chiOf(r) - atan(a, r);   // SW.Kerr's φ label (header)
   float phs = phi - Om * uTime;
   vec2 q = vec2(phs / TWO_PI * 6.0, log(r) * 9.0);
   float n = vnoise(q, 6.0) * 0.65 + vnoise(q * vec2(2.0, 2.0) + 0.37, 12.0) * 0.35;
@@ -350,7 +397,7 @@ vec3 discEmission(float r, vec2 xy, vec4 p, out float gOut, out float dopOut) {
   if (uHot.w > 0.0) {
     float rs = uHot.x;
     float Oms = uDiscOn > 0 ? 1.0 / (rs * sqrt(rs) + a) : -1.0 / (rs * sqrt(rs) - a);
-    float phk = uHot.y + Oms * uTime + atan(a, rs);          // KS azimuth of the spot
+    float phk = chiOf(rs) - atan(a, rs) - (uHot.y + Oms * uTime);   // tracer-chart azimuth of the spot
     vec2 sp = sqrt(rs * rs + a * a) * vec2(cos(phk), sin(phk));
     float d2 = dot(xy - sp, xy - sp);
     fil += uHot.w * exp(-d2 / (2.0 * uHot.z * uHot.z));
@@ -383,13 +430,13 @@ void main() {
     float f = 2.0 * r2 * r / (r2 * r2 + a2 * x.z * x.z);
     float invS = 1.0 / (r2 + a2);
     vec3 k = vec3((r * x.x + a * x.y) * invS, (r * x.y - a * x.x) * invS, x.z / r);
-    float K0 = -1.0 - dot(k, n);
+    float K0 = 1.0 - dot(k, n);                       // K = −p_t + k·p⃗ with p_t = −1
     float kr = dot(k, rh);
     float A = 1.0 - f * kr * kr;
     float B = dot(n, rh) + f * K0 * kr;
     float C = f * K0 * K0;
     float delta = (B - sqrt(B * B + A * C)) / A;
-    p = vec4(1.0, -n + delta * rh);
+    p = vec4(-1.0, -n + delta * rh);
   }
 
   vec3 col = vec3(0.0);
@@ -400,14 +447,15 @@ void main() {
   bool discThin = uDiscOn != 0 && uDisc2.z <= 0.0;
   bool discSlab = uDiscOn != 0 && uDisc2.z > 0.0;
   bool jets = uJets.x > 0.0;
-  float r = 0.0;
+  float r = 0.0, nSteps = 0.0;
   vec3 k1x, k1p, k2x, k2p, k3x, k3p, k4x, k4p;
   float rTmp;
 
   for (int i = 0; i < MAX_STEPS; i++) {
     if (i >= uSteps) break;
+    nSteps += 1.0;
     deriv(x, p, k1x, k1p, r);
-    if (r < uRcap) { reason = 1; break; }
+    if (r < uHor.z) { reason = 1; break; }
     if (r > R_ESCAPE && dot(x, k1x) > 0.0) { reason = 2; dirOut = k1x; break; }
     float h = stepOf(r);
     float hh = 0.5 * h;
@@ -432,7 +480,7 @@ void main() {
         tau *= 1.0 - ab;
         gView = gg; dopView = dd;
       }
-      if (jets && abs(xm.z) < uJets.z && abs(xm.z) > uRcap) {
+      if (jets && abs(xm.z) < uJets.z && abs(xm.z) > uHor.x) {
         float rho = length(xm.xy);
         float w = abs(xm.z) * uJets.y + 0.25;
         float prof = exp(-2.0 * (rho * rho) / (w * w));
@@ -468,12 +516,15 @@ void main() {
     if (r > 10.0) { reason = 2; dirOut = k1x; } else { reason = 1; }
   }
 
-  // debug: escape direction encoded in two 8-bit passes (view 8: high byte, 9: low byte); alpha = reason
-  if (uView == 8 || uView == 9) {
+  // debug: escape direction encoded in two 8-bit passes (view 8: high byte, 9: low byte);
+  // view 10: red = reason/4 (1 captured, 2 escaped, 3 opaque hit), green = steps/MAX_STEPS
+  dirOut.y = -dirOut.y;                            // tracer chart → ingoing KS (χ(400) ≈ 0)
+  if (uView >= 8) {
     vec3 q = (reason == 2) ? normalize(dirOut) * 0.5 + 0.5 : vec3(0.0);
     vec3 hi = floor(q * 255.0) / 255.0;
     vec3 lo = floor(fract(q * 255.0) * 255.0) / 255.0;
-    OUT_COLOR = vec4(uView == 8 ? hi : lo, float(reason) / 4.0);
+    if (uView == 10) hi = vec3(float(reason) / 4.0, nSteps / float(MAX_STEPS), 0.0);
+    OUT_COLOR = vec4(uView == 9 ? lo : hi, 1.0);
     return;
   }
 
@@ -507,7 +558,7 @@ void main() {
     '#define TEX texture2D\n#define OUT_COLOR gl_FragColor\n' + FRAG_BODY;
   const VERT_WEBGL2 = '#version 300 es\nin vec2 aPos;\nvoid main(){ gl_Position = vec4(aPos, 0.0, 1.0); }';
 
-  const VIEW_ID = { color: 0, redshift: 1, doppler: 2, lensing: 3, _dirhi: 8, _dirlo: 9 };
+  const VIEW_ID = { color: 0, redshift: 1, doppler: 2, lensing: 3, _dirhi: 8, _dirlo: 9, _reason: 10 };
   const BG_ID = { stars: 0, grid: 1, black: 2 };
 
   // ---------------------------------------------------------------- shared param → ray setup
@@ -587,8 +638,42 @@ void main() {
       for (let i = 0; i < 8; i++) s[i] += (h / 6) * (T1[i] + 2 * T2[i] + 2 * T3[i] + T4[i]);
       return s;
     }
+    // Ingoing KS position (x,y,z) and n contravariant 4-vectors (flat array, 4 per vector, (t,x,y,z))
+    // → the tracer chart (outgoing KS, then Φ-mirrored). Returns { pos: [3], vecs } (out reused).
+    function toTracer(a, x, y, z, vecs, out) {
+      const o = out || { pos: new Float64Array(3), vecs: new Float64Array(vecs ? vecs.length : 0) };
+      const r = rOf(x, y, z, a), r2 = r * r, a2 = a * a;
+      const S = r2 + a2, Dl = r2 - 2 * r + a2, D = r2 * r2 + a2 * z * z;
+      const c = chi(a, r), cs = Math.cos(c), sn = Math.sin(c);
+      const xo = x * cs + y * sn, yo = -x * sn + y * cs;           // rotate by −χ
+      o.pos[0] = xo; o.pos[1] = -yo; o.pos[2] = z;                 // Φ: mirror y
+      if (vecs) {
+        const drx = r2 * r * x / D, dry = r2 * r * y / D, drz = r * z * S / D;
+        const tP = -4 * r / Dl, chiP = 4 * a * r / (S * Dl);
+        for (let k = 0; k + 3 < vecs.length; k += 4) {
+          const vt = vecs[k], vx = vecs[k + 1], vy = vecs[k + 2], vz = vecs[k + 3];
+          const vr = drx * vx + dry * vy + drz * vz;
+          // (vx' + i vy') = e^{−iχ} [ (vx + i vy) − i χ' vr (x + i y) ]
+          const ux = vx + chiP * vr * y, uy = vy - chiP * vr * x;
+          const vxo = ux * cs + uy * sn, vyo = -ux * sn + uy * cs;
+          o.vecs[k] = -(vt + tP * vr); o.vecs[k + 1] = vxo; o.vecs[k + 2] = -vyo; o.vecs[k + 3] = vz;
+        }
+      }
+      return o;
+    }
+    // Tracer-chart position → ingoing KS position (out3).
+    function fromTracer(a, xm, ym, z, out) {
+      const o = out || new Float64Array(3);
+      const r = rOf(xm, ym, z, a), c = chi(a, r), cs = Math.cos(c), sn = Math.sin(c);
+      const xo = xm, yo = -ym;                                       // Φ⁻¹
+      o[0] = xo * cs - yo * sn; o[1] = xo * sn + yo * cs; o[2] = z;  // rotate by +χ
+      return o;
+    }
+    const PIX_TMP = { pos: new Float64Array(3), vecs: new Float64Array(16) };
+    const BASIS_TMP = new Float64Array(16);
     // Initial state8 for the pixel (px, py) — px, py in canvas pixels, py from the TOP (pixel
-    // centres at +0.5) — exactly as the fragment shader builds it. Past-directed momentum.
+    // centres at +0.5) — exactly as the fragment shader builds it, in the TRACER chart (position
+    // and momentum are outgoing-KS, Φ-mirrored; future-directed there — see header).
     function pixelRay(params, px, py, width, height, out) {
       const s = out || new Float64Array(8);
       const a = params.a || 0;
@@ -596,6 +681,7 @@ void main() {
       const aspect = height / width;
       if (params.mode === 'far') {
         const F = farBasis(params.inclinationDeg, params.positionAngleDeg);
+        F[1] = -F[1]; F[4] = -F[4]; F[7] = -F[7];
         const hw = params.halfWidthM || 12;
         const al = ndcX * hw, be = ndcY * hw * aspect;
         const x = R_ESCAPE * F[0] + al * F[3] + be * F[6];
@@ -606,36 +692,41 @@ void main() {
         const r = rOf(x, y, z, a), r2 = r * r, a2 = a * a;
         const f = 2 * r2 * r / (r2 * r2 + a2 * z * z), invS = 1 / (r2 + a2);
         const k = [(r * x + a * y) * invS, (r * y - a * x) * invS, z / r];
-        const K0 = -1 - (k[0] * n[0] + k[1] * n[1] + k[2] * n[2]);
+        const K0 = 1 - (k[0] * n[0] + k[1] * n[1] + k[2] * n[2]);
         const kr = k[0] * rh[0] + k[1] * rh[1] + k[2] * rh[2];
         const A = 1 - f * kr * kr, B = (n[0] * rh[0] + n[1] * rh[1] + n[2] * rh[2]) + f * K0 * kr, C = f * K0 * K0;
         const delta = (B - Math.sqrt(B * B + A * C)) / A;
         s[0] = 0; s[1] = x; s[2] = y; s[3] = z;
-        s[4] = 1; s[5] = -n[0] + delta * rh[0]; s[6] = -n[1] + delta * rh[1]; s[7] = -n[2] + delta * rh[2];
+        s[4] = -1; s[5] = -n[0] + delta * rh[0]; s[6] = -n[1] + delta * rh[1]; s[7] = -n[2] + delta * rh[2];
       } else {
         const cam = params.camera;
         const tf = Math.tan((params.fovDeg || 60) * Math.PI / 360);
         let dx = ndcX * tf, dy = ndcY * tf * aspect, dz = 1;
         const dl = Math.hypot(dx, dy, dz); dx /= dl; dy /= dl; dz /= dl;
+        const vv = [cam.right, cam.up, cam.forward, cam.e0];
+        for (let c = 0; c < 4; c++) for (let m = 0; m < 4; m++) BASIS_TMP[c * 4 + m] = vv[c][m];
+        const tc = toTracer(a, cam.x, cam.y, cam.z, BASIS_TMP, PIX_TMP);
+        const B = tc.vecs;
         const pUp = [0, 0, 0, 0];
-        for (let m = 0; m < 4; m++) pUp[m] = dx * cam.right[m] + dy * cam.up[m] + dz * cam.forward[m] - cam.e0[m];
+        for (let m = 0; m < 4; m++) pUp[m] = dx * B[m] + dy * B[4 + m] + dz * B[8 + m] - B[12 + m];
         const low = [0, 0, 0, 0];
-        lower(a, cam.x, cam.y, cam.z, pUp, low);
-        s[0] = 0; s[1] = cam.x; s[2] = cam.y; s[3] = cam.z;
+        lower(a, tc.pos[0], tc.pos[1], tc.pos[2], pUp, low);
+        s[0] = 0; s[1] = tc.pos[0]; s[2] = tc.pos[1]; s[3] = tc.pos[2];
         s[4] = low[0]; s[5] = low[1]; s[6] = low[2]; s[7] = low[3];
       }
       return s;
     }
     // Trace the pixel's ray with the shader's step rule. Stops at the horizon, at escape, at a
     // thin-disc crossing inside [rIn, rOut] when opts.stopAtDisc, or after `steps`.
-    // → { reason: 'horizon'|'escape'|'disc'|'maxSteps', steps, state, dir (unit, escape only), r }
+    // → { reason: 'horizon'|'escape'|'disc'|'maxSteps', steps, state (tracer chart), r,
+    //     dir (unit sky direction in ingoing KS, escape only), hit ([x,y,0] ingoing KS, disc only) }
     function trace(params, px, py, width, height, opts) {
       const o = opts || {};
       const a = params.a || 0;
       const s = pixelRay(params, px, py, width, height, o.state);
       const maxSteps = o.steps || params.steps || 200;
       const stepScale = params.stepScale || 1;
-      const rcap = rPlus(a) * 1.001;
+      const rcap = captureRadius(a);
       const d = T1;
       const disc = o.stopAtDisc && params.disc && params.disc.on;
       const rIn = disc ? (params.disc.rIn != null ? params.disc.rIn : isco(a, params.disc.prograde !== false)) : 0;
@@ -663,16 +754,17 @@ void main() {
         }
         zPrev = s[3];
       }
-      let dir = null;
+      let dir = null, hit = null;
       if (reason === 'escape' || (reason === 'maxSteps' && r > 10)) {
         deriv(a, s, d);
         const l = Math.hypot(d[1], d[2], d[3]);
-        dir = [d[1] / l, d[2] / l, d[3] / l];
+        dir = [d[1] / l, -d[2] / l, d[3] / l];
         if (reason === 'maxSteps') reason = 'escape';
       }
-      return { reason, steps: n, state: s, dir, r };
+      if (reason === 'disc') hit = Array.from(fromTracer(a, s[1], s[2], 0));
+      return { reason, steps: n, state: s, dir, r, hit };
     }
-    return { rOf, lower, deriv, rk4, pixelRay, trace, stepOf, isco, rPlus, farBasis };
+    return { rOf, lower, deriv, rk4, pixelRay, trace, toTracer, fromTracer, chi, stepOf, isco, rPlus, rMinus, photonOrbit, captureRadius, farBasis };
   })();
 
   // ---------------------------------------------------------------- GL program
@@ -703,7 +795,7 @@ void main() {
     return prog;
   }
 
-  const UNIFORMS = ['uA', 'uRcap', 'uSteps', 'uStepScale', 'uRes', 'uMode', 'uFov', 'uHalfW', 'uCam', 'uBasis',
+  const UNIFORMS = ['uA', 'uHor', 'uSteps', 'uStepScale', 'uRes', 'uMode', 'uFov', 'uHalfW', 'uCam', 'uBasis',
     'uFar', 'uDiscOn', 'uDisc', 'uDisc2', 'uHot', 'uJets', 'uView', 'uBg', 'uTone', 'uTime', 'uSky', 'uHasSky', 'uRamp'];
 
   // Create the tracer on a canvas. opts: { webgl1Fallback = true, forceWebGL1 = false,
@@ -758,6 +850,7 @@ void main() {
 
     const basis = new Float32Array(16);
     const far = new Float32Array(9);
+    const TRACER_TMP = { pos: new Float64Array(3), vecs: new Float32Array(16) };
     let disposed = false;
     let lastRenderMs = 0;
 
@@ -801,7 +894,7 @@ void main() {
       if (isGL2) gl.bindVertexArray(vao); else { gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0); }
 
       gl.uniform1f(loc.uA, a);
-      gl.uniform1f(loc.uRcap, rPlus(a) * 1.001);
+      gl.uniform3f(loc.uHor, rPlus(a), rMinus(a), captureRadius(a));
       gl.uniform1i(loc.uSteps, Math.max(8, Math.min(MAX_STEPS, Math.round(num(P.steps, 200)))));
       gl.uniform1f(loc.uStepScale, Math.min(4, Math.max(0.1, num(P.stepScale, 1))));
       gl.uniform2f(loc.uRes, W, H);
@@ -811,11 +904,13 @@ void main() {
       gl.uniform1f(loc.uFov, Math.tan(Math.min(170, Math.max(1, num(P.fovDeg, 60))) * Math.PI / 360));
       gl.uniform1f(loc.uHalfW, Math.max(0.5, num(P.halfWidthM, 12)));
       const cam = P.camera || { x: 30, y: 0, z: 0, right: [0, 0, 1, 0], up: [0, 0, 0, 1], forward: [0, -1, 0, 0], e0: [1, 0, 0, 0] };
-      gl.uniform3f(loc.uCam, num(cam.x, 30), num(cam.y, 0), num(cam.z, 0));
       const vecs = [cam.right, cam.up, cam.forward, cam.e0];
       for (let c = 0; c < 4; c++) for (let m = 0; m < 4; m++) basis[c * 4 + m] = num(vecs[c] && vecs[c][m], 0);
-      gl.uniformMatrix4fv(loc.uBasis, false, basis);
+      const tc = cpu.toTracer(a, num(cam.x, 30), num(cam.y, 0), num(cam.z, 0), basis, TRACER_TMP);
+      gl.uniform3f(loc.uCam, tc.pos[0], tc.pos[1], tc.pos[2]);
+      gl.uniformMatrix4fv(loc.uBasis, false, tc.vecs);
       farBasis(num(P.inclinationDeg, 90), num(P.positionAngleDeg, 0), far);
+      far[1] = -far[1]; far[4] = -far[4]; far[7] = -far[7];            // Φ mirror of n̂, right, up
       gl.uniformMatrix3fv(loc.uFar, false, far);
 
       const disc = P.disc || {};
@@ -882,7 +977,7 @@ void main() {
   SW.KerrGL = {
     create,
     cpu,
-    isco, rPlus, stepOf, farBasis,
+    isco, rPlus, rMinus, photonOrbit, captureRadius, chi, stepOf, farBasis,
     MAX_STEPS, R_ESCAPE,
     fragmentSource: { webgl2: FRAG_WEBGL2, webgl1: FRAG_WEBGL1 }
   };
