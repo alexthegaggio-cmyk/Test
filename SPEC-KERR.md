@@ -44,7 +44,7 @@ SW.Kerr.observables({ massMsun, a, distanceMpc?, prograde? }) → {
     hawkingK, evaporationYr (t = 5120 π G² M³ /(ħ c⁴)), entropyBits (S = k A c³/(4Għ) → bits = S/(k ln2)), 
     angularMomentumSI, extractableFractionPenrose (1 − √((1 + √(1−a²))/2)), 
     tidalAccelHumanG (Δa across 2 m for a body at r+: 2 G M h / r³ in g),
-    lenseThirringHzAt(rM) helper, iscoEfficiency (1 − E_isco: 5.7% at a=0, 42% at a=0.998)
+    lenseThirringHzAt(rM) helper, iscoEfficiency (1 − E_isco: 5.7% at a=0, 32% at a=0.998, 42% as a→1)
 }
 SW.Kerr.hawkingK(massMsun), SW.Kerr.evaporationYr(massMsun)
 
@@ -74,7 +74,7 @@ SW.Kerr.discTemperature(r, a, prograde, { mdotEdd = 0.1, massMsun }) → T (K) f
 
 Numerical rules: RK4 with step `h = h0 · max(0.5, r) ` capped so that |Δr| ≤ 0.02 r per step near the hole; the tests check `H` stays within 1e-6 of its initial value over 2,000 steps and that E, L, Q drift < 1e-6 relative. Everything must be allocation-free in the hot path (pass scratch arrays).
 
-Unit tests (`tests/unit/kerr.test.mjs`, ≥ 25 tests): horizons (a=0 → 2, a=1 → 1); isco (a=0 → 6, a=0.998 prograde → 1.237, retrograde a=1 → 9); photon orbit (a=0 → 3; a=1 → 1 prograde, 4 retrograde); shadow boundary at a=0 is a circle of radius √27 ≈ 5.196; at a=0.998, i=90° the boundary's left/right extents are ≈ −2.0/+5.2 (the D shape) — check α_min ≈ −2 ± 0.2 and α_max ≈ 5.2 ± 0.2 and β_max ≈ 5.1 ± 0.2; observables for Sgr A* (4.297e6 M☉, 8.277 kpc = 0.008277 Mpc) shadowMicroarcsec ≈ 52 ± 3; M87* (6.5e9 M☉, 16.8 Mpc) ≈ 42 ± 3; hawkingK(1) ≈ 6.17e-8; evaporationYr(1) ≈ 2.1e67; metric·metricInv = identity to 1e-12 at random points for a = 0.9; a circular-orbit particle from `circularOrbit` + `timelikeFromLocal` integrated for 3 orbits stays at r within 1e-4; a photon launched from r = 30 with impact parameter b = 5.2 at a = 0 is captured, b = 5.5 escapes (b_crit = √27); conserved quantities drift; `discRedshift` for a face-on disc at large r → √(1 − 3/r) (gravitational + transverse only, a=0); tetrads orthonormal (η) to 1e-10; boost by v then −v is the identity.
+Unit tests (`tests/unit/kerr.test.mjs`, ≥ 25 tests): horizons (a=0 → 2, a=1 → 1); isco (a=0 → 6, a=0.998 prograde → 1.237, retrograde a=1 → 9); photon orbit (a=0 → 3; a=1 → 1 prograde, 4 retrograde); shadow boundary at a=0 is a circle of radius √27 ≈ 5.196; at a=0.998, i=90° the boundary's left/right extents are ≈ −2.11/+7.00 (the D shape) and β_max ≈ 5.196; observables for Sgr A* (4.297e6 M☉, 8.277 kpc = 0.008277 Mpc) shadowMicroarcsec ≈ 52 ± 3; M87* (6.5e9 M☉, 16.8 Mpc) ≈ 42 ± 3; hawkingK(1) ≈ 6.17e-8; evaporationYr(1) ≈ 2.1e67; metric·metricInv = identity to 1e-12 at random points for a = 0.9; a circular-orbit particle from `circularOrbit` + `timelikeFromLocal` integrated for 3 orbits stays at r within 1e-4; a photon launched from r = 30 with impact parameter b = 5.19 at a = 0 is captured, b = 5.2 and 5.5 escape (b_crit = √27 = 5.196); conserved quantities drift; `discRedshift` for a face-on disc at large r → √(1 − 3/r) (gravitational + transverse only, a=0); tetrads orthonormal (η) to 1e-10; boost by v then −v is the identity.
 
 ## `SW.KerrGL` (kerr-shader.js)
 
@@ -110,7 +110,7 @@ Shader design (document in a header comment):
 - WebGL1 fallback: GLSL ES 1.00 with constant loop bounds; `highp`; texture size clamp.
 - Precision: use `highp float` everywhere; near the horizon use a smaller step (`h ∝ (r − r_+)` floor 0.02). Verify the shader compiles and renders in headless Chromium with SwiftShader (`--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader`).
 
-Validation the shader author must do: (1) `a=0`, far mode, i=90°: the shadow edge radius in α equals √27 within 2% (read back pixels: the boundary of the black region along the α axis); (2) `a=0.998`, i=90°: α extents ≈ −2.0 and +5.2 (D-shape) within 4%; (3) `a=0`, a bright test star exactly behind: Einstein ring; (4) near mode at r=20, a=0.9, disc on: the approaching side visibly brighter; (5) frame compiles on WebGL1 and WebGL2; (6) a CPU ray from `SW.Kerr` (if present — otherwise your own JS port of the same equations) and the GPU ray for the same pixel end at the same sky direction within 0.5°.
+Validation the shader author must do: (1) `a=0`, far mode, i=90°: the shadow edge radius in α equals √27 within 2% (read back pixels: the boundary of the black region along the α axis); (2) `a=0.998`, i=90°: α extents ≈ −2.11 and +7.00 (D-shape) within 4%, compared against SW.Kerr.shadowBoundary; (3) `a=0`, a bright test star exactly behind: Einstein ring; (4) near mode at r=20, a=0.9, disc on: the approaching side visibly brighter; (5) frame compiles on WebGL1 and WebGL2; (6) a CPU ray from `SW.Kerr` (if present — otherwise your own JS port of the same equations) and the GPU ray for the same pixel end at the same sky direction within 0.5°.
 
 ## kerr.js — module `'blackhole'`
 
