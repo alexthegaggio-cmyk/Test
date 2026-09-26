@@ -342,7 +342,7 @@
     const fx = dfdr * rx, fy = dfdr * ry, fz = dfdr * rz - 4 * a2 * z * r * r2 * inv2;
     // ∂k: kx = (r x + a y)/S, ky = (r y − a x)/S, kz = z/r, S = r² + a²
     const cx = x - 2 * r * kx, cy = y - 2 * r * ky;
-    const kxx = (rx * cx + r) * invS, kxy = ry * cx * invS, kxz = rz * cx * invS;
+    const kxx = (rx * cx + r) * invS, kxy = (ry * cx + a) * invS, kxz = rz * cx * invS;
     const kyx = (rx * cy - a) * invS, kyy = (ry * cy + r) * invS, kyz = rz * cy * invS;
     const kzx = -z * rx / r2, kzy = -z * ry / r2, kzz = (r - z * rz) / r2;
     const Px = kxx * px + kyx * py + kzx * pz;
@@ -360,7 +360,7 @@
   function rk4Tail(a, s, h, tmp) {
     const hh = 0.5 * h;
     for (let i = 0; i < 8; i++) tmp[32 + i] = s[i] + hh * tmp[i];
-    geodesicDeriv(a, tmp.subarray ? subY(tmp) : tmp, K2);
+    geodesicDeriv(a, subY(tmp), K2);
     for (let i = 0; i < 8; i++) { tmp[8 + i] = K2[i]; tmp[32 + i] = s[i] + hh * K2[i]; }
     geodesicDeriv(a, subY(tmp), K2);
     for (let i = 0; i < 8; i++) { tmp[16 + i] = K2[i]; tmp[32 + i] = s[i] + h * K2[i]; }
@@ -423,6 +423,11 @@
       let h = hOf(r);
       const cap = 0.02 * r / (Math.abs(rdot) + 1e-300);
       if (h > cap) h = cap;
+      // Momentum-rate cap: a backward (past-directed) ray that ends in the hole approaches the PAST horizon,
+      // where ingoing Kerr–Schild coordinates are singular and |p_i| grows like 1/(r − r₊); keep the relative
+      // change of p per step below 2 % so the approach stays accurate until r < stopAtHorizonR.
+      const p2 = s[5] * s[5] + s[6] * s[6] + s[7] * s[7] + s[4] * s[4], dp2 = tmp[5] * tmp[5] + tmp[6] * tmp[6] + tmp[7] * tmp[7];
+      if (dp2 > 0) { const capP = 0.02 * Math.sqrt(p2 / dp2); if (h > capP) h = capP; }
       if (lambda + h > lambdaMax) h = lambdaMax - lambda;
       const zPrev = z;
       rk4Tail(a, s, h, tmp);
@@ -430,8 +435,6 @@
       r = rOf(s[1], s[2], s[3], a);
       if (disc && zPrev * s[3] < 0) {
         const w = zPrev / (zPrev - s[3]);          // fraction of the step at which z = 0
-        const xc = s[1] + (s[1] - (s[1] - h * tmp[1])) * 0, yc = s[2];   // placeholders (overwritten below)
-        void xc; void yc;
         // Linear interpolation between the pre-step point (x − Δx) and the post-step point: Δ ≈ s − s_prev.
         // s_prev is reconstructed from the RK4 increment stored in tmp: s_prev = s − h/6 (k1 + 2k2 + 2k3 + k4).
         let rc = 0, xp, yp, zp;
@@ -523,7 +526,7 @@
     const out = out16 || new Float64Array(16);
     const g = metric(x, y, z, a, GT);
     const gtt = g[0], gtp = -y * g[1] + x * g[2];
-    const gpp = x * x + y * y + (-y * g[1] + x * g[2]) * (-y * g[1] + x * g[2]) / (g[0] - -1 === 0 ? 1 : (g[0] + 1)) * 0 + gppOf(g, x, y);
+    const gpp = gppOf(g, x, y);
     const omega = gpp > 0 ? -gtp / gpp : 0;
     const n2 = -(gtt + 2 * omega * gtp + omega * omega * gpp);
     const inv = 1 / Math.sqrt(n2 > 1e-300 ? n2 : 1e-300);
