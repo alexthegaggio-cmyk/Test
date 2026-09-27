@@ -3,3 +3,4 @@ tools/raw/
 test-results/
 playwright-report/
 .playwright/
+node_modules

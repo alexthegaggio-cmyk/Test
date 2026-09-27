@@ -1,0 +1,14 @@
+{
+  "name": "bottle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A whole Linux computer in one HTML file: a from-scratch RISC-V emulator with a terminal, debugger and assembler.",
+  "type": "module",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "test": "node --test tests/unit/*.test.mjs",
+    "e2e": "playwright test -c tests/e2e/playwright.config.mjs",
+    "boot": "node tools/boot.mjs"
+  },
+  "license": "MIT"
+}
