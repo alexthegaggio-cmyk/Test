@@ -1,0 +1,158 @@
+<title>Bottle</title>
+<meta name="description" content="A whole Linux computer in one HTML file: a from-scratch RISC-V emulator with a terminal, debugger and assembler.">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style><!-- @styles --></style>
+
+<div id="app" data-running="false" data-drawer="closed">
+  <header id="topbar">
+    <div class="brand" title="Bottle — a RISC-V machine in one file">
+      <svg class="brand-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M6 1h4v3l2.5 3v8H3.5V7L6 4z" fill="none" stroke="currentColor" stroke-width="1.25"/><path d="M5 10h6" stroke="currentColor" stroke-width="1.25"/></svg>
+      <span class="brand-name">Bottle</span>
+      <span class="brand-sub">RV32IMA · Linux 6.1</span>
+    </div>
+    <div class="group group-image">
+      <label class="sr-only" for="image-select">Image</label>
+      <select id="image-select" aria-label="Image">
+        <option value="linux">Linux</option>
+        <option value="doom">DOOM</option>
+        <option value="bare">Bare metal</option>
+      </select>
+      <button id="btn-boot" class="btn btn-primary" type="button">Boot</button>
+      <button id="btn-pause" class="btn" type="button" disabled>Pause</button>
+      <button id="btn-reset" class="btn" type="button" disabled>Reset</button>
+      <button id="btn-demo" class="btn btn-chip" type="button" disabled title="Log in and run a few commands for you">Type for me</button>
+    </div>
+    <div id="status" class="status mono" aria-live="polite">idle</div>
+    <button id="btn-debug" class="btn btn-toggle" type="button" aria-pressed="false" aria-controls="debugger">Debugger</button>
+  </header>
+
+  <main id="stage">
+    <div id="terminal" aria-label="Guest console"></div>
+    <div id="overlay" class="overlay" hidden><div class="overlay-box mono" id="overlay-text"></div></div>
+  </main>
+
+  <aside id="debugger" aria-label="Debugger" hidden>
+    <div class="drawer-grip" id="drawer-grip" title="drag to resize" aria-hidden="true"></div>
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <nav class="tabs" role="tablist">
+      <button class="tab is-active" role="tab" data-tab="registers" aria-selected="true">Registers</button>
+      <button class="tab" role="tab" data-tab="disasm" aria-selected="false">Disassembly</button>
+      <button class="tab" role="tab" data-tab="memory" aria-selected="false">Memory</button>
+      <button class="tab" role="tab" data-tab="asm" aria-selected="false">Assembler</button>
+      <button class="tab" role="tab" data-tab="about" aria-selected="false">About</button>
+      <button id="btn-debug-close" class="tab tab-close" type="button" aria-label="Close debugger">×</button>
+    </nav>
+
+    <section class="pane is-active" data-pane="registers" role="tabpanel">
+      <div class="pane-tools">
+        <span class="mono dim" id="reg-summary">no state</span>
+        <span class="spacer"></span>
+        <button class="btn btn-sm" id="btn-pause-dbg" type="button">Pause</button>
+        <button class="btn btn-sm" id="btn-step-reg" type="button">Step</button>
+      </div>
+      <div class="scroll">
+        <table class="regs mono" id="reg-table"><tbody id="reg-body"></tbody></table>
+        <table class="regs mono csrs" id="csr-table"><tbody id="csr-body"></tbody></table>
+      </div>
+    </section>
+
+    <section class="pane" data-pane="disasm" role="tabpanel">
+      <div class="pane-tools">
+        <label class="sr-only" for="disasm-addr">Address</label>
+        <input id="disasm-addr" class="mono addr" type="text" placeholder="follow pc" spellcheck="false" autocomplete="off">
+        <button class="btn btn-sm" id="btn-disasm-pc" type="button" title="Follow pc">pc</button>
+        <span class="spacer"></span>
+        <button class="btn btn-sm" id="btn-step" type="button">Step</button>
+        <button class="btn btn-sm" id="btn-step100" type="button">Step 100</button>
+        <button class="btn btn-sm" id="btn-run-cursor" type="button" title="Run until the selected line">Run to cursor</button>
+      </div>
+      <div class="scroll"><div class="disasm mono" id="disasm-list"></div></div>
+      <div class="pane-foot mono dim" id="disasm-foot">click the gutter to toggle a breakpoint · click a line to select it</div>
+    </section>
+
+    <section class="pane" data-pane="memory" role="tabpanel">
+      <div class="pane-tools">
+        <label class="sr-only" for="mem-addr">Address</label>
+        <input id="mem-addr" class="mono addr" type="text" value="0x80000000" spellcheck="false" autocomplete="off">
+        <button class="btn btn-sm" id="btn-mem-go" type="button">Go</button>
+        <button class="btn btn-sm" id="btn-mem-prev" type="button" title="Previous 512 bytes">−</button>
+        <button class="btn btn-sm" id="btn-mem-next" type="button" title="Next 512 bytes">+</button>
+        <span class="spacer"></span>
+        <button class="btn btn-sm" id="btn-mem-pc" type="button" title="Go to pc">pc</button>
+        <button class="btn btn-sm" id="btn-mem-sp" type="button" title="Go to sp">sp</button>
+      </div>
+      <div class="scroll"><div class="hexdump mono" id="mem-dump"></div></div>
+      <div class="pane-foot mono dim" id="mem-foot">click a byte to edit · Enter writes · Esc cancels</div>
+    </section>
+
+    <section class="pane" data-pane="asm" role="tabpanel">
+      <div class="pane-tools">
+        <span class="mono dim">base 0x80000000</span>
+        <span class="spacer"></span>
+        <button class="btn btn-sm" id="btn-assemble" type="button">Assemble</button>
+        <button class="btn btn-sm btn-primary" id="btn-run-program" type="button">Run bare-metal</button>
+      </div>
+      <div class="asm-split">
+        <textarea id="asm-source" class="mono" spellcheck="false" autocomplete="off" autocapitalize="off" wrap="off" aria-label="Assembly source"></textarea>
+        <div class="asm-out">
+          <div class="asm-errors mono" id="asm-errors" hidden></div>
+          <div class="asm-listing mono" id="asm-listing"></div>
+          <div class="asm-symbols mono" id="asm-symbols"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="pane" data-pane="about" role="tabpanel">
+      <div class="scroll about">
+        <h2>Bottle</h2>
+        <p>A whole Linux computer in one HTML file. Bottle is a from-scratch <strong>RISC-V RV32IMA + Zicsr</strong> emulator written in JavaScript. It boots an unmodified Linux 6.1.14 kernel (nommu, with a Buildroot userland) and the emdoom port of DOOM inside this page. The kernel images ship gzipped inside the file and are inflated in the browser; nothing is fetched.</p>
+        <h3>Machine map</h3>
+        <table class="map mono">
+          <tr><td>0x80000000</td><td>RAM, 64 MiB · kernel image at +0, DTB near the top</td></tr>
+          <tr><td>0x10000000</td><td>UART · write = console out · +5 LSR, polled</td></tr>
+          <tr><td>0x1100bff8</td><td>CLINT mtime · 0x11004000 mtimecmp</td></tr>
+          <tr><td>0x11100000</td><td>SYSCON · 0x5555 poweroff · 0x7777 reboot</td></tr>
+        </table>
+        <p>Machine mode only; traps are direct; the timer is the only interrupt source. Compressed instructions are not implemented — the kernel is built without them.</p>
+        <h3>Debugger</h3>
+        <p>Pause the machine at any time. Registers flash when they change; the disassembly follows pc; click the gutter to set a breakpoint, or click a line and <em>Run to cursor</em>. The memory view is live and bytes are editable. The assembler builds a bare-metal program and runs it on the same core.</p>
+        <h3>Credits</h3>
+        <ul>
+          <li>Machine model after <strong>mini-rv32ima</strong> by Charles Lohr (MIT/BSD) — the images boot unchanged on it.</li>
+          <li>Linux 6.1.14 rv32 nommu kernel with a Buildroot userland; DOOM is the <strong>emdoom</strong> port rendering to the terminal.</li>
+          <li>Terminal by <strong>xterm.js</strong> (MIT). Type set in JetBrains Mono and Inter Tight.</li>
+        </ul>
+        <p class="dim">Login is <span class="mono">root</span>, no password. Everything runs in a Web Worker; the page never blocks.</p>
+      </div>
+    </section>
+  </aside>
+
+  <footer id="strip">
+    <span id="boot-progress" class="mono">idle</span>
+    <span class="strip-sep" aria-hidden="true"></span>
+    <canvas id="mips-spark" class="spark" width="140" height="18" aria-label="MIPS over the last minute"></canvas>
+    <span id="mips-label" class="mono dim">— MIPS</span>
+    <span class="strip-sep" aria-hidden="true"></span>
+    <span id="uptime" class="mono dim">0.00 s</span>
+    <span class="spacer"></span>
+    <label class="speed dim" for="speed-select">clock</label>
+    <select id="speed-select" class="mono" aria-label="Guest clock speed">
+      <option value="0.25">¼×</option>
+      <option value="0.5">½×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+      <option value="4">4×</option>
+    </select>
+    <span id="hint" class="hint"></span>
+  </footer>
+</div>
+<pre id="console-mirror" hidden aria-hidden="true"></pre>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+<script><!-- @data --></script>
+<script><!-- @scripts --></script>
