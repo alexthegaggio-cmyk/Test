@@ -21,6 +21,7 @@ const noScriptClose = (js, rel) => { if (/<\/script/i.test(js)) throw new Error(
 let html = text('src/index.html');
 const css = text('src/styles.css') + '\n/* xterm.css */\n' + text('src/ui/xterm.css');
 const workerSrc = WORKER_ORDER.map((r) => `// ==== ${r} ====\n${text(r)}`).join('\n\n');
+const vendorSrc = ['src/vendor/xterm.js', 'src/vendor/addon-fit.js'].map((r) => `// ==== ${r} ====\n${noScriptClose(text(r), r)}`).join('\n\n');
 const pageSrc = PAGE_ORDER.map((r) => `// ==== ${r} ====\n${noScriptClose(text(r), r)}`).join('\n\n');
 
 // The worker source is embedded as a JSON string literal; JSON.stringify escapes "</" safely enough,
@@ -29,7 +30,7 @@ const workerLiteral = JSON.stringify(workerSrc).replace(/<\/script/gi, '<\\/scri
 const images = Object.fromEntries(Object.entries(IMAGES).map(([k, rel]) => [k, read(rel).toString('base64')]));
 const dataScript = `window.BOTTLE_WORKER_SRC = ${workerLiteral};\nwindow.BOTTLE_IMAGES = ${JSON.stringify(images)};`;
 
-for (const [marker, body] of [['<!-- @styles -->', css], ['<!-- @data -->', dataScript], ['<!-- @scripts -->', pageSrc]]) {
+for (const [marker, body] of [['<!-- @styles -->', css], ['<!-- @vendor -->', vendorSrc], ['<!-- @data -->', dataScript], ['<!-- @scripts -->', pageSrc]]) {
   if (!html.includes(marker)) throw new Error(`build: marker ${marker} missing from src/index.html`);
   html = html.replace(marker, () => body);
 }

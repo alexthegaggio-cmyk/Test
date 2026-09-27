@@ -155,7 +155,9 @@
         }
         if (f3 === 4 && imm === -1) return done('not', R[rd] + ',' + R[rs1], m);
         if (f3 === 3 && imm === 1) return done('seqz', R[rd] + ',' + R[rs1], m);
-        return done(m, R[rd] + ',' + R[rs1] + ',' + imm);
+        // objdump prints shift amounts in hex (riscv-dis.c operand codes '<'/'>').
+        const immText = (f3 === 1 || f3 === 5) ? '0x' + imm.toString(16) : String(imm);
+        return done(m, R[rd] + ',' + R[rs1] + ',' + immText);
       }
       case 0x33: { // OP
         let m;

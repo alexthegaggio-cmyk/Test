@@ -1,0 +1,5 @@
+test-results/
+playwright-report/
+ref/trace
+ref/trace.bin
+ref/trace.txt
